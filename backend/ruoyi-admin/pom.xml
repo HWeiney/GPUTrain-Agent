@@ -54,6 +54,12 @@
             <artifactId>ruoyi-generator</artifactId>
         </dependency>
 
+        <!-- GPUTrain核心业务 -->
+        <dependency>
+            <groupId>com.ruoyi</groupId>
+            <artifactId>ruoyi-train-core</artifactId>
+        </dependency>
+
         <!-- 单元测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
