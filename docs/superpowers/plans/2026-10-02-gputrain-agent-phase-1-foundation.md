@@ -6,14 +6,14 @@
 
 **Architecture:** The official RuoYi backend and frontend live under `backend/` and `frontend/`. GPUTrain business code is introduced as four focused Maven modules; Phase 1 implements only a read-only overview slice while keeping agent, monitoring, and runner protocol modules dependency-light for later phases.
 
-**Tech Stack:** Java 17, Maven 3.9+, RuoYi-Vue Spring Boot 3 branch, Vue 3 TypeScript branch, Node.js 22 LTS, MySQL 8.4, Redis 7.4, Docker Compose, JUnit 5, Vitest.
+**Tech Stack:** Java 17, Maven 3.9+, RuoYi-Vue Spring Boot 3 branch, Vue 3 TypeScript branch, Node.js 26 with an explicit build-compatibility gate, MySQL 8.4, Redis 7.4, Docker Compose, JUnit 5, Vitest.
 
 ## Global Constraints
 
 - Work only in `/Users/weiney/Documents/个人信息/GPUTrain Agent`.
 - Backend upstream: `https://github.com/yangzongzhuan/RuoYi-Vue.git`, branch `springboot3`.
 - Frontend upstream: `https://github.com/yangzongzhuan/RuoYi-Vue3.git`, branch `typescript`.
-- Runtime floor: Java 17 and Node.js 22 LTS.
+- Runtime baseline: Java 17 and the user's installed Node.js 26. Retain Node.js 26 only if dependency installation, tests, and the production build all pass; otherwise switch to Node.js 22 or 24 LTS before changing application code.
 - Use RuoYi-Vue Spring Boot 3 and RuoYi-Vue3 TypeScript; do not substitute RuoYi-Cloud or a third-party Plus fork.
 - MySQL is the durable source of truth; Redis contains rebuildable state only.
 - Do not add Kafka, Elasticsearch, Kubernetes, Qwen, MCP, DCGM, or training execution in Phase 1.
@@ -71,7 +71,7 @@ docker compose version
 git status --short
 ```
 
-Expected: Java reports 17 or newer, Node reports 22.x, Docker Compose is available, and only ignored `.DS_Store` files may be present. If a required runtime is absent, stop this task and install that runtime before importing source.
+Expected: Java reports 17 or newer, Node reports 26.x, Docker Compose is available, and only ignored `.DS_Store` files may be present. If a required runtime is absent, stop this task and install that runtime before importing source.
 
 - [ ] **Step 2: Ignore machine-local files before importing**
 
