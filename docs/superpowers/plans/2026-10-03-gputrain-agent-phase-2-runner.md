@@ -355,6 +355,7 @@ git commit -m "feat: persist runner identities and commands"
 - Enrollment creation requires an idempotency key. A matching key with identical owner/name/Linux user/root/expiry returns the existing token by decrypting its temporary AES-GCM ciphertext. Reusing a key with different fields returns `ENROLLMENT_INVALID`. A unique database key handles concurrent duplicate insertion; the losing request rereads and returns the committed winner. Successful registration clears the token ciphertext in the conditional consume update; transaction rollback preserves it if Runner creation fails. Replays after successful consumption return `ENROLLMENT_ALREADY_USED`.
 - `createEnrollment` and `register` use `READ_COMMITTED` isolation so duplicate-key winner rereads and concurrent-consume classification see the latest committed row. `existingGrant` also compares the stored idempotency key with exact Java string equality.
 - Both credential-bearing endpoints call `RunnerTransportSecurityGuard`: HTTPS always passes; HTTP passes only when `allow-loopback-http` is enabled, `require-https` is false, and the remote address is loopback. Other HTTP requests return `RUNNER_HTTPS_REQUIRED`.
+- `RunnerProtocolExceptionHandler` is a highest-precedence advice scoped to Runner web controllers. It returns `{errorCode, message}` with a fixed safe message; `RUNNER_HTTPS_REQUIRED` maps to HTTP 403 and other protocol errors to HTTP 400, preserving protocol codes instead of RuoYi's generic AjaxResult runtime envelope.
 
 - [ ] **Step 1: Write failing AES-GCM and token digest tests**
 
