@@ -11,7 +11,7 @@
             <arg column="idempotency_key" javaType="java.lang.String"/>
             <arg column="status" javaType="java.lang.String"/>
             <arg column="lease_until" javaType="java.time.Instant"/>
-            <arg column="attempt_count" javaType="int"/>
+            <arg column="attempt_count" javaType="_int"/>
             <arg column="result" javaType="java.lang.String"/>
             <arg column="error_code" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.Instant"/>

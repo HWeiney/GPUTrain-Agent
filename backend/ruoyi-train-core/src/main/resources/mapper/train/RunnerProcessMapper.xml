@@ -6,7 +6,7 @@
             <idArg column="process_id" javaType="java.lang.Long"/>
             <arg column="command_id" javaType="java.lang.Long"/>
             <arg column="runner_id" javaType="java.lang.Long"/>
-            <arg column="pid" javaType="long"/>
+            <arg column="pid" javaType="_long"/>
             <arg column="process_started_at" javaType="java.time.Instant"/>
             <arg column="executable" javaType="java.lang.String"/>
             <arg column="arguments_sha256" javaType="java.lang.String"/>

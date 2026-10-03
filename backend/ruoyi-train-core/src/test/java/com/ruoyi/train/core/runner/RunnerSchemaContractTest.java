@@ -1,6 +1,7 @@
 package com.ruoyi.train.core.runner;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -11,6 +12,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.time.Instant;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
+import org.apache.ibatis.mapping.ResultMap;
+import org.apache.ibatis.mapping.ResultMapping;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.Test;
 import com.ruoyi.train.core.runner.mapper.RunnerMapper;
@@ -18,6 +21,9 @@ import com.ruoyi.train.core.runner.mapper.RunnerEnrollmentMapper;
 import com.ruoyi.train.core.runner.mapper.RunnerCommandMapper;
 import com.ruoyi.train.core.runner.mapper.RunnerProcessMapper;
 import com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord;
+import com.ruoyi.train.core.runner.domain.RunnerCommandRecord;
+import com.ruoyi.train.core.runner.domain.RunnerProcessRecord;
+import com.ruoyi.train.core.runner.domain.RunnerRecord;
 
 class RunnerSchemaContractTest
 {
@@ -101,6 +107,35 @@ class RunnerSchemaContractTest
             "runner", "linux", "/tmp", "digest", Instant.EPOCH, null, Instant.EPOCH);
         Configuration configuration = new Configuration();
         assertTrue("digest".equals(configuration.newMetaObject(record).getValue("tokenDigest")));
+    }
+
+    @Test
+    void myBatisConstructorTypesMatchRecordConstructors() throws IOException
+    {
+        Configuration configuration = new Configuration();
+        assertConstructorMapping(configuration, RunnerMapper.class, RunnerRecord.class, "RunnerResult");
+        assertConstructorMapping(configuration, RunnerEnrollmentMapper.class,
+            RunnerEnrollmentRecord.class, "EnrollmentResult");
+        assertConstructorMapping(configuration, RunnerCommandMapper.class,
+            RunnerCommandRecord.class, "CommandResult");
+        assertConstructorMapping(configuration, RunnerProcessMapper.class,
+            RunnerProcessRecord.class, "ProcessResult");
+    }
+
+    private void assertConstructorMapping(Configuration configuration, Class<?> mapper,
+            Class<?> record, String resultMapId) throws IOException
+    {
+        String resource = "mapper/train/" + mapper.getSimpleName() + ".xml";
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource))
+        {
+            assertTrue(stream != null, resource);
+            new XMLMapperBuilder(stream, configuration, resource,
+                configuration.getSqlFragments()).parse();
+        }
+        ResultMap resultMap = configuration.getResultMap(mapper.getName() + "." + resultMapId);
+        Class<?>[] argumentTypes = resultMap.getConstructorResultMappings().stream()
+            .map(ResultMapping::getJavaType).toArray(Class<?>[]::new);
+        assertDoesNotThrow(() -> record.getDeclaredConstructor(argumentTypes), record.getSimpleName());
     }
 
     private String mapperXml(String name) throws IOException
