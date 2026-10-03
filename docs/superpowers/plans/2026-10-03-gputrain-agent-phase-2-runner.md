@@ -420,6 +420,7 @@ gputrain:
     enrollment-pepper: ${RUNNER_ENROLLMENT_PEPPER:}
     allowed-clock-skew: 2m
     nonce-ttl: 5m
+    max-request-body-bytes: 65536
     require-https: true
     allow-loopback-http: false
 ```
@@ -490,11 +491,11 @@ Expected: FAIL because verifier and nonce abstractions do not exist.
 
 - [ ] **Step 4: Add cached-body authentication only for `/runner-api/v1/**` except `/register`**
 
-The interceptor reads exact body bytes, validates `X-Runner-Id`, `X-Runner-Timestamp`, `X-Runner-Nonce`, and `X-Runner-Signature`, stores authenticated Runner ID as a request attribute, and returns a JSON error with the stable error code on failure. Registration remains unauthenticated at the HMAC layer but is protected by its one-time token.
+The interceptor applies `RunnerTransportSecurityGuard` before HMAC, reads exact body bytes, validates `X-Runner-Id`, `X-Runner-Timestamp`, `X-Runner-Nonce`, and `X-Runner-Signature`, stores authenticated Runner ID as a request attribute, and returns a JSON error with the stable error code on failure. Registration remains unauthenticated at the HMAC layer but is protected by its one-time token and existing transport guard. The signed Runner API body limit is configurable through `gputrain.runner-security.max-request-body-bytes` (default 65536). Reject declared oversized requests before reading, bound unknown-length reads, and emit HTTP 413 with `RUNNER_REQUEST_TOO_LARGE` from the filter.
 
 - [ ] **Step 5: Implement heartbeat validation and online TTL**
 
-Require the path-authenticated Runner ID to equal the body Runner ID and the persisted Linux username to equal the heartbeat username. Update `last_heartbeat_at` in MySQL and write `gputrain:runner:online:<runnerId>` with a 90-second TTL.
+Require the path-authenticated Runner ID to equal the body Runner ID and the persisted Linux username to equal the heartbeat username. Update the existing MySQL `last_seen_at` column and write `gputrain:runner:online:<runnerId>` with a 90-second TTL. Map an online Redis write failure to safe HTTP 503 with `RUNNER_TEMPORARILY_UNAVAILABLE`; the MySQL update may already have completed, and retries remain idempotent.
 
 - [ ] **Step 6: Run focused tests, full core tests, and commit**
 

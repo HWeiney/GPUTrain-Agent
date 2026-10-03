@@ -7,17 +7,22 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import com.ruoyi.train.core.runner.web.CachedBodyHttpServletRequest;
 import com.ruoyi.train.core.runner.web.RunnerAuthenticationInterceptor;
+import com.ruoyi.train.core.runner.web.RunnerProtocolExceptionHandler;
+import com.ruoyi.train.runner.protocol.RunnerProtocolException;
 
 @Configuration
 public class RunnerWebConfiguration implements WebMvcConfigurer
 {
     private final RunnerAuthenticationInterceptor interceptor;
+    private final RunnerSecurityProperties properties;
 
-    public RunnerWebConfiguration(RunnerAuthenticationInterceptor interceptor)
+    public RunnerWebConfiguration(RunnerAuthenticationInterceptor interceptor, RunnerSecurityProperties properties)
     {
         this.interceptor = interceptor;
+        this.properties = properties;
     }
 
     @Override
@@ -34,7 +39,19 @@ public class RunnerWebConfiguration implements WebMvcConfigurer
             HttpServletRequest http = (HttpServletRequest) request;
             String path = http.getRequestURI().substring(http.getContextPath().length());
             if (RunnerAuthenticationInterceptor.isSignedPath(path))
-                chain.doFilter(new CachedBodyHttpServletRequest(http), response);
+            {
+                CachedBodyHttpServletRequest cached;
+                try
+                {
+                    cached = new CachedBodyHttpServletRequest(http, properties.getMaxRequestBodyBytes());
+                }
+                catch (RunnerProtocolException failure)
+                {
+                    RunnerProtocolExceptionHandler.writeError((HttpServletResponse) response, failure);
+                    return;
+                }
+                chain.doFilter(cached, response);
+            }
             else
                 chain.doFilter(request, response);
         };

@@ -5,6 +5,7 @@ gputrain:
     enrollment-pepper: ${RUNNER_ENROLLMENT_PEPPER:}
     allowed-clock-skew: 2m
     nonce-ttl: 5m
+    max-request-body-bytes: 65536
     require-https: true
     allow-loopback-http: false
 

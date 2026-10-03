@@ -2,6 +2,7 @@ package com.ruoyi.train.core.runner.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,5 +67,24 @@ class RunnerHeartbeatServiceTest
                 () -> service.record("1", new RunnerHeartbeat("1", "other", NOW), NOW));
         assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, error.code());
         assertEquals(List.of(), updates);
+    }
+
+    @Test
+    void redisOnlineFailureReturnsSafeRetryableProtocolErrorAfterHeartbeatUpdate()
+    {
+        RedisTemplate<Object, Object> failingRedis = new RedisTemplate<>()
+        {
+            @Override
+            public ValueOperations<Object, Object> opsForValue()
+            {
+                throw new IllegalStateException("redis-internal-secret");
+            }
+        };
+        RunnerHeartbeatService failingService = new RunnerHeartbeatService(mapper, failingRedis);
+        RunnerProtocolException error = assertThrows(RunnerProtocolException.class,
+                () -> failingService.record("1", new RunnerHeartbeat("1", "linux", NOW), NOW));
+        assertEquals("RUNNER_TEMPORARILY_UNAVAILABLE", error.code().name());
+        assertFalse(error.getMessage().contains("redis-internal-secret"));
+        assertEquals(List.of(1L, NOW), updates);
     }
 }

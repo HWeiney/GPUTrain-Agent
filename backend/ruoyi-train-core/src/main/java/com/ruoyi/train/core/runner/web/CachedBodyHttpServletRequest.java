@@ -10,6 +10,9 @@ import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
+import com.ruoyi.train.core.runner.config.RunnerSecurityProperties;
+import com.ruoyi.train.runner.protocol.RunnerErrorCode;
+import com.ruoyi.train.runner.protocol.RunnerProtocolException;
 
 public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper
 {
@@ -18,9 +21,26 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper
 
     public CachedBodyHttpServletRequest(HttpServletRequest request) throws IOException
     {
+        this(request, RunnerSecurityProperties.DEFAULT_MAX_REQUEST_BODY_BYTES);
+    }
+
+    public CachedBodyHttpServletRequest(HttpServletRequest request, int maxBytes) throws IOException
+    {
         super(request);
-        this.body = request.getInputStream().readAllBytes();
+        if (maxBytes <= 0 || maxBytes == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Runner API body limit must be positive");
+        if (request.getContentLengthLong() > maxBytes)
+            throw tooLarge();
+        this.body = request.getInputStream().readNBytes(maxBytes + 1);
+        if (body.length > maxBytes)
+            throw tooLarge();
         setAttribute(BODY_ATTRIBUTE, body.clone());
+    }
+
+    private static RunnerProtocolException tooLarge()
+    {
+        return new RunnerProtocolException(RunnerErrorCode.RUNNER_REQUEST_TOO_LARGE,
+                "Runner API request body exceeds the configured limit");
     }
 
     @Override

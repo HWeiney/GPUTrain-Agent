@@ -64,6 +64,33 @@ class RunnerProtocolExceptionHandlerMvcTest
         assertFalse(response.contains("secret"));
     }
 
+    @Test
+    void unavailableProtocolErrorsReturnSafe503() throws Exception
+    {
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new UnavailableProtocolFailureController())
+                .setControllerAdvice(new RunnerProtocolExceptionHandler(), new GenericRuntimeExceptionAdvice())
+                .build();
+        MvcResult result = mvc.perform(post("/test/runner-unavailable"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn();
+        String response = result.getResponse().getContentAsString();
+        assertTrue(response.contains("\"errorCode\":\"RUNNER_TEMPORARILY_UNAVAILABLE\""));
+        assertTrue(response.contains("Runner protocol request rejected."));
+        assertFalse(response.contains("redis-internal-secret"));
+    }
+
+    @Test
+    void oversizedProtocolErrorsReturnSafe413() throws Exception
+    {
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new TooLargeProtocolFailureController())
+                .setControllerAdvice(new RunnerProtocolExceptionHandler()).build();
+        MvcResult result = mvc.perform(post("/test/runner-too-large"))
+                .andExpect(status().isPayloadTooLarge()).andReturn();
+        assertTrue(result.getResponse().getContentAsString()
+                .contains("\"errorCode\":\"RUNNER_REQUEST_TOO_LARGE\""));
+        assertFalse(result.getResponse().getContentAsString().contains("internal-detail"));
+    }
+
     @RestController
     static class EnrollmentProtocolFailureController
     {
@@ -71,6 +98,28 @@ class RunnerProtocolExceptionHandlerMvcTest
         void fail()
         {
             throw new RunnerProtocolException(RunnerErrorCode.ENROLLMENT_INVALID, "secret exception detail");
+        }
+    }
+
+    @RestController
+    static class UnavailableProtocolFailureController
+    {
+        @PostMapping("/test/runner-unavailable")
+        void fail()
+        {
+            throw new RunnerProtocolException(RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE,
+                    "redis-internal-secret");
+        }
+    }
+
+    @RestController
+    static class TooLargeProtocolFailureController
+    {
+        @PostMapping("/test/runner-too-large")
+        void fail()
+        {
+            throw new RunnerProtocolException(RunnerErrorCode.RUNNER_REQUEST_TOO_LARGE,
+                    "internal-detail");
         }
     }
 

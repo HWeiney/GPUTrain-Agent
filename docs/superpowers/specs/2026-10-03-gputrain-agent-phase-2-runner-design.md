@@ -144,6 +144,10 @@ MySQL 是 Runner、命令和进程状态的持久化事实来源；Redis 只保�
 - 管理接口：沿用若依登录态与权限注解，用于创建注册凭据、查询 Runner、创建安全 fixture 命令和请求停止。
 - Runner 接口：使用独立 HMAC 认证，不接受若依用户 Token，用于注册、心跳、长轮询、执行状态上报和进程对账。
 
+除一次性凭据注册接口外，Runner 接口在验证 HMAC 前执行 HTTPS 检查；只有明确启用本地开发例外时才允许 loopback HTTP。签名请求的原始 body 上限由 `gputrain.runner-security.max-request-body-bytes` 配置，默认 65536 字节。已知 Content-Length 超限时在读取前拒绝；未知长度请求最多读取上限加 1 字节，并以安全 JSON 和 HTTP 413 返回 `RUNNER_REQUEST_TOO_LARGE`。注册接口不受该签名请求上限约束。
+
+心跳先更新 MySQL 的 `last_seen_at`，再以 90 秒 TTL 写入 Redis 在线标记。若在线标记写入失败，返回 HTTP 503 和 `RUNNER_TEMPORARILY_UNAVAILABLE`，不暴露 Redis 详情；此时 MySQL 更新时间可能已提交，重试心跳是幂等的。
+
 主要数据流如下：
 
 ```text
@@ -167,6 +171,8 @@ MySQL 是 Runner、命令和进程状态的持久化事实来源；Redis 只保�
 - `ENROLLMENT_INVALID`
 - `ENROLLMENT_ALREADY_USED`
 - `RUNNER_HTTPS_REQUIRED`
+- `RUNNER_REQUEST_TOO_LARGE`
+- `RUNNER_TEMPORARILY_UNAVAILABLE`
 - `COMMAND_LEASE_EXPIRED`
 - `WORK_DIR_OUTSIDE_ALLOWED_ROOT`
 - `WORK_DIR_SYMLINK_ESCAPE`

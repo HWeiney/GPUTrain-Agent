@@ -8,12 +8,14 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "gputrain.runner-security")
 public class RunnerSecurityProperties
 {
+    public static final int DEFAULT_MAX_REQUEST_BODY_BYTES = 65_536;
     private String masterKey;
     private String enrollmentPepper;
     private String allowedClockSkew = "2m";
     private String nonceTtl = "5m";
     private boolean requireHttps = true;
     private boolean allowLoopbackHttp;
+    private int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
 
     public String getMasterKey()
     {
@@ -55,4 +57,11 @@ public class RunnerSecurityProperties
     public void setRequireHttps(boolean requireHttps) { this.requireHttps = requireHttps; }
     public boolean isAllowLoopbackHttp() { return allowLoopbackHttp; }
     public void setAllowLoopbackHttp(boolean allowLoopbackHttp) { this.allowLoopbackHttp = allowLoopbackHttp; }
+    public int getMaxRequestBodyBytes() { return maxRequestBodyBytes; }
+    public void setMaxRequestBodyBytes(int maxRequestBodyBytes)
+    {
+        if (maxRequestBodyBytes <= 0 || maxRequestBodyBytes == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Runner API body limit must be positive");
+        this.maxRequestBodyBytes = maxRequestBodyBytes;
+    }
 }

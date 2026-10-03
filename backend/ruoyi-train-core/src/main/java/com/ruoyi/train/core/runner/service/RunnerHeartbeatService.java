@@ -46,7 +46,15 @@ public class RunnerHeartbeatService
         if (runnerMapper.updateHeartbeat(numericId, receivedAt) != 1)
             throw new RunnerProtocolException(RunnerErrorCode.RUNNER_AUTH_INVALID,
                     "Runner heartbeat could not be recorded");
-        redisTemplate.opsForValue().set("gputrain:runner:online:" + runnerId, "1", ONLINE_TTL);
+        try
+        {
+            redisTemplate.opsForValue().set("gputrain:runner:online:" + runnerId, "1", ONLINE_TTL);
+        }
+        catch (RuntimeException failure)
+        {
+            throw new RunnerProtocolException(RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE,
+                    "Runner online status is temporarily unavailable");
+        }
     }
 
     private static RunnerProtocolException identityMismatch()

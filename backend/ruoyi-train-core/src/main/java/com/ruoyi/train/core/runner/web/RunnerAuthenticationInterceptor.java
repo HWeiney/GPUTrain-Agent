@@ -1,15 +1,14 @@
 package com.ruoyi.train.core.runner.web;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Objects;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import com.ruoyi.train.core.runner.security.RunnerRequestVerifier;
+import com.ruoyi.train.core.runner.security.RunnerTransportSecurityGuard;
 import com.ruoyi.train.core.runner.security.SignedRunnerRequest;
 import com.ruoyi.train.runner.protocol.RunnerErrorCode;
 import com.ruoyi.train.runner.protocol.RunnerProtocolException;
@@ -19,10 +18,12 @@ public class RunnerAuthenticationInterceptor implements HandlerInterceptor
 {
     public static final String RUNNER_ID_ATTRIBUTE = "gputrain.runnerId";
     private final RunnerRequestVerifier verifier;
+    private final RunnerTransportSecurityGuard transportGuard;
 
-    public RunnerAuthenticationInterceptor(RunnerRequestVerifier verifier)
+    public RunnerAuthenticationInterceptor(RunnerRequestVerifier verifier, RunnerTransportSecurityGuard transportGuard)
     {
         this.verifier = Objects.requireNonNull(verifier, "verifier");
+        this.transportGuard = Objects.requireNonNull(transportGuard, "transportGuard");
     }
 
     @Override
@@ -34,6 +35,7 @@ public class RunnerAuthenticationInterceptor implements HandlerInterceptor
             return true;
         try
         {
+            transportGuard.assertAllowed(request.isSecure(), request.getRemoteAddr());
             byte[] body = (byte[]) request.getAttribute(CachedBodyHttpServletRequest.BODY_ATTRIBUTE);
             if (body == null)
                 throw invalid();
@@ -57,11 +59,7 @@ public class RunnerAuthenticationInterceptor implements HandlerInterceptor
         }
         catch (RunnerProtocolException failure)
         {
-            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-            response.getWriter().write("{\"errorCode\":\"" + failure.code().name()
-                    + "\",\"message\":\"Runner protocol request rejected.\"}");
+            RunnerProtocolExceptionHandler.writeError(response, failure);
             return false;
         }
     }
