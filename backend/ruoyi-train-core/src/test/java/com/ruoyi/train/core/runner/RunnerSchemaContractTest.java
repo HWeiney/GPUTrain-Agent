@@ -47,6 +47,8 @@ class RunnerSchemaContractTest
             () -> assertTrue(sql.contains("SET NAMES utf8mb4")),
             () -> assertTrue(sql.contains("UNIQUE KEY uk_runner_name (runner_name)")),
             () -> assertTrue(sql.contains("UNIQUE KEY uk_enrollment_digest (token_digest)")),
+            () -> assertTrue(sql.contains("token_ciphertext VARCHAR(1024) NULL")),
+            () -> assertTrue(sql.contains("UNIQUE KEY uk_enrollment_idempotency (idempotency_key)")),
             () -> assertTrue(sql.contains("KEY idx_command_poll (runner_id, status, created_at)")),
             () -> assertTrue(sql.contains("UNIQUE KEY uk_process_command (command_id)")),
             () -> assertTrue(sql.contains("secret_ciphertext VARCHAR(1024)")),
@@ -60,8 +62,11 @@ class RunnerSchemaContractTest
         String xml = mapperXml("RunnerEnrollmentMapper");
         assertAll(
             () -> assertTrue(xml.contains("id=\"consume\"")),
+            () -> assertTrue(xml.contains("id=\"findByIdempotencyKey\"")),
+            () -> assertTrue(xml.contains("idempotency_key = #{idempotencyKey}")),
             () -> assertTrue(xml.contains("token_digest = #{tokenDigest}")),
             () -> assertTrue(xml.contains("consumed_at IS NULL")),
+            () -> assertTrue(xml.contains("SET consumed_at = #{consumedAt}, token_ciphertext = NULL")),
             () -> assertTrue(xml.contains("expires_at &gt; #{consumedAt}")));
     }
 
@@ -104,9 +109,12 @@ class RunnerSchemaContractTest
     void myBatisCanReadRecordParameters()
     {
         RunnerEnrollmentRecord record = new RunnerEnrollmentRecord(null, 1L,
-            "runner", "linux", "/tmp", "digest", Instant.EPOCH, null, Instant.EPOCH);
+            "runner", "linux", "/tmp", "digest", "ciphertext", "idempotency-key",
+            Instant.EPOCH, null, Instant.EPOCH);
         Configuration configuration = new Configuration();
         assertTrue("digest".equals(configuration.newMetaObject(record).getValue("tokenDigest")));
+        assertTrue("ciphertext".equals(configuration.newMetaObject(record).getValue("tokenCiphertext")));
+        assertTrue("idempotency-key".equals(configuration.newMetaObject(record).getValue("idempotencyKey")));
     }
 
     @Test

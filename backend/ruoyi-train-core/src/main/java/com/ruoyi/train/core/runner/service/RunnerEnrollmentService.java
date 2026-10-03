@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord;
@@ -47,23 +48,56 @@ public class RunnerEnrollmentService
 
     @Transactional
     public EnrollmentGrant createEnrollment(long ownerUserId, String runnerName, String linuxUsername,
-            String allowedRoot, Instant expiresAt)
+            String allowedRoot, Instant expiresAt, String idempotencyKey)
     {
         Objects.requireNonNull(expiresAt, "expiresAt");
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128)
+            throw new IllegalArgumentException("Enrollment idempotency key must contain 1 to 128 characters");
+        RunnerEnrollmentRecord existing = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
+        if (existing != null)
+            return existingGrant(existing, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
         if (!expiresAt.isAfter(Instant.now()))
             throw new IllegalArgumentException("Enrollment expiry must be in the future");
         String plaintextToken = randomToken();
         String digest = tokenDigester.digest(plaintextToken);
+        String tokenCiphertext = credentialCipher.encrypt(plaintextToken.getBytes(StandardCharsets.UTF_8));
         Instant createdAt = Instant.now();
         RunnerEnrollmentRecord record = new RunnerEnrollmentRecord(null, ownerUserId, runnerName,
-                linuxUsername, allowedRoot, digest, expiresAt, null, createdAt);
-        if (enrollmentMapper.insert(record) != 1)
-            throw new IllegalStateException("Unable to create Runner enrollment");
-        RunnerEnrollmentRecord inserted = enrollmentMapper.findByTokenDigest(digest);
+                linuxUsername, allowedRoot, digest, tokenCiphertext, idempotencyKey, expiresAt, null, createdAt);
+        try
+        {
+            if (enrollmentMapper.insert(record) != 1)
+                throw new IllegalStateException("Unable to create Runner enrollment");
+        }
+        catch (DuplicateKeyException duplicate)
+        {
+            RunnerEnrollmentRecord winner = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
+            if (winner == null)
+                throw duplicate;
+            return existingGrant(winner, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
+        }
+        RunnerEnrollmentRecord inserted = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
         if (inserted == null || inserted.enrollmentId() == null)
             throw new IllegalStateException("Created Runner enrollment could not be retrieved");
-        return new EnrollmentGrant(inserted.enrollmentId(), plaintextToken, runnerName,
-                linuxUsername, allowedRoot, expiresAt);
+        return existingGrant(inserted, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
+    }
+
+    private EnrollmentGrant existingGrant(RunnerEnrollmentRecord record, long ownerUserId,
+            String runnerName, String linuxUsername, String allowedRoot, Instant expiresAt)
+    {
+        if (record.ownerUserId() != ownerUserId || !record.runnerName().equals(runnerName)
+                || !record.linuxUsername().equals(linuxUsername)
+                || !record.allowedRoot().equals(allowedRoot) || !record.expiresAt().equals(expiresAt))
+            throw protocolError(RunnerErrorCode.ENROLLMENT_INVALID,
+                    "Enrollment idempotency key is already bound to different enrollment fields");
+        if (record.consumedAt() != null || record.tokenCiphertext() == null)
+            throw protocolError(RunnerErrorCode.ENROLLMENT_ALREADY_USED,
+                    "Enrollment token has already been used");
+        String token = new String(credentialCipher.decrypt(record.tokenCiphertext()), StandardCharsets.UTF_8);
+        if (!tokenDigester.matches(token, record.tokenDigest()))
+            throw new IllegalStateException("Stored enrollment token ciphertext does not match its digest");
+        return new EnrollmentGrant(record.enrollmentId(), token, runnerName, linuxUsername,
+                allowedRoot, expiresAt);
     }
 
     @Transactional

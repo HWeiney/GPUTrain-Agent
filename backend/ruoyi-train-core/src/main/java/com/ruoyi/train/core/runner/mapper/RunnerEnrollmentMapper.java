@@ -12,6 +12,8 @@ public interface RunnerEnrollmentMapper
 
     RunnerEnrollmentRecord findByTokenDigest(@Param("tokenDigest") String tokenDigest);
 
+    RunnerEnrollmentRecord findByIdempotencyKey(@Param("idempotencyKey") String idempotencyKey);
+
     int consume(@Param("enrollmentId") Long enrollmentId,
             @Param("tokenDigest") String tokenDigest,
             @Param("consumedAt") Instant consumedAt);

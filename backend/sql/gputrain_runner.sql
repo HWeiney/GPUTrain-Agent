@@ -21,11 +21,14 @@ CREATE TABLE IF NOT EXISTS train_runner_enrollment (
     linux_username VARCHAR(128) NOT NULL,
     allowed_root VARCHAR(1024) NOT NULL,
     token_digest CHAR(64) NOT NULL,
+    token_ciphertext VARCHAR(1024) NULL,
+    idempotency_key VARCHAR(128) NOT NULL,
     expires_at DATETIME(3) NOT NULL,
     consumed_at DATETIME(3) NULL,
     created_at DATETIME(3) NOT NULL,
     PRIMARY KEY (enrollment_id),
-    UNIQUE KEY uk_enrollment_digest (token_digest)
+    UNIQUE KEY uk_enrollment_digest (token_digest),
+    UNIQUE KEY uk_enrollment_idempotency (idempotency_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS train_runner_command (

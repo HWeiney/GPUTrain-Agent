@@ -6,6 +6,7 @@ gputrain:
     allowed-clock-skew: 2m
     nonce-ttl: 5m
     require-https: false
+    allow-loopback-http: true
 
 spring:
   datasource:

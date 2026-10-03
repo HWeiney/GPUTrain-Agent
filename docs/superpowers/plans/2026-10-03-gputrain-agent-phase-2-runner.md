@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - The control plane never stores Linux passwords or SSH private keys and never starts training over SSH.
-- Runtime Runner traffic uses HTTPS plus HMAC-SHA256; only explicit tests may use loopback HTTP.
+- Runtime Runner traffic uses HTTPS plus HMAC-SHA256; explicit local/test configuration may permit HTTP only from a loopback remote address.
 - Runner secrets are AES-256-GCM encrypted at rest with a 256-bit master key supplied outside Git.
 - A Runner accepts structured process fields only and never invokes `sh -c` or another command shell.
 - Files and processes are limited to the configured allowed root; the Linux acceptance root is `/data/hanw/hw_code/gputrain-test` for user `hanw`.
@@ -52,6 +52,7 @@
 - `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/web/RunnerAuthenticationInterceptor.java`: verifies signed Runner requests before controllers.
 - `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/config/RunnerWebConfiguration.java`: registers only `/runner-api/**` with the interceptor.
 - `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/config/RunnerSecurityProperties.java`: clock skew, TTL, HTTPS rule, and master key configuration.
+- `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/security/RunnerTransportSecurityGuard.java`: HTTPS enforcement and loopback-only local HTTP for credential endpoints.
 
 ### Runner executable
 
@@ -254,9 +255,9 @@ git commit -m "feat: define runner protocol and request signing"
 - Test: `backend/ruoyi-train-core/src/test/java/com/ruoyi/train/core/runner/RunnerSchemaContractTest.java`
 
 **Interfaces:**
-- Produces: `RunnerEnrollmentMapper.consume(enrollmentId, tokenDigest, consumedAt)` returning exactly one only for an unexpired, unconsumed row.
+- Produces: `RunnerEnrollmentMapper.consume(enrollmentId, tokenDigest, consumedAt)` returning exactly one only for an unexpired, unconsumed row, while clearing its temporary token ciphertext in the same update.
 - Produces: `RunnerCommandMapper.leaseNext(runnerId, now, leasedUntil)` with transaction-level row locking.
-- Produces: unique database keys on Runner name, enrollment token digest, and `(runner_id, idempotency_key)`.
+- Produces: unique database keys on Runner name, enrollment token digest, enrollment idempotency key, and `(runner_id, idempotency_key)`.
 
 - [ ] **Step 1: Write a failing schema contract test that reads the SQL resource**
 
@@ -284,9 +285,12 @@ Expected: FAIL with `NoSuchFileException` for `backend/sql/gputrain_runner.sql`.
 
 The SQL must use `SET NAMES utf8mb4`, `BIGINT` identifiers, `DATETIME(3)` timestamps, `VARCHAR(64)` statuses, `JSON` payload/result columns, foreign keys between command/process and Runner records, and these exact indexes:
 
+The enrollment table includes `token_digest`, nullable `token_ciphertext`, and a required `idempotency_key`. The token ciphertext is set to `NULL` when registration succeeds.
+
 ```sql
 UNIQUE KEY uk_runner_name (runner_name),
 UNIQUE KEY uk_enrollment_digest (token_digest),
+UNIQUE KEY uk_enrollment_idempotency (idempotency_key),
 UNIQUE KEY uk_runner_idempotency (runner_id, idempotency_key),
 KEY idx_command_poll (runner_id, status, created_at),
 UNIQUE KEY uk_process_command (command_id)
@@ -308,7 +312,7 @@ LIMIT 1
 FOR UPDATE SKIP LOCKED
 ```
 
-Then update only that ID to `LEASED`; never include `RUNNING` in the lease-expiry predicate. Enrollment consumption must update only `consumed_at IS NULL AND expires_at > #{consumedAt}` and check the token digest in the same statement.
+Then update only that ID to `LEASED`; never include `RUNNING` in the lease-expiry predicate. Enrollment consumption must update only `consumed_at IS NULL AND expires_at > #{consumedAt}`, check the token digest in the same statement, and clear `token_ciphertext` atomically. Enrollment consumption and Runner creation share one transaction so a Runner insert failure restores the encrypted token.
 
 - [ ] **Step 5: Run schema, compile, and Compose checks**
 
@@ -335,6 +339,7 @@ git commit -m "feat: persist runner identities and commands"
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/config/RunnerSecurityProperties.java`
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/security/EnrollmentTokenDigester.java`
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/security/RunnerCredentialCipher.java`
+- Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/security/RunnerTransportSecurityGuard.java`
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/service/RunnerEnrollmentService.java`
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/web/RunnerAdminController.java`
 - Create: `backend/ruoyi-train-core/src/main/java/com/ruoyi/train/core/runner/web/RunnerRegistrationController.java`
@@ -343,9 +348,11 @@ git commit -m "feat: persist runner identities and commands"
 - Test: corresponding `*Test.java` files under `backend/ruoyi-train-core/src/test/java/com/ruoyi/train/core/runner/`
 
 **Interfaces:**
-- Produces: `EnrollmentGrant createEnrollment(long ownerUserId, String runnerName, String linuxUsername, String allowedRoot, Instant expiresAt)`.
+- Produces: `EnrollmentGrant createEnrollment(long ownerUserId, String runnerName, String linuxUsername, String allowedRoot, Instant expiresAt, String idempotencyKey)`.
 - Produces: `RunnerCredentials register(RunnerRegistration request, Instant now)`.
 - Produces: `RunnerCredentialCipher.encrypt(byte[] plaintext)` and `decrypt(String encoded)` using `version.iv.ciphertext` Base64URL fields.
+- Enrollment creation requires an idempotency key. A matching key with identical owner/name/Linux user/root/expiry returns the existing token by decrypting its temporary AES-GCM ciphertext. Reusing a key with different fields returns `ENROLLMENT_INVALID`. A unique database key handles concurrent duplicate insertion; the losing request rereads and returns the committed winner. Successful registration clears the token ciphertext in the conditional consume update; transaction rollback preserves it if Runner creation fails. Replays after successful consumption return `ENROLLMENT_ALREADY_USED`.
+- Both credential-bearing endpoints call `RunnerTransportSecurityGuard`: HTTPS always passes; HTTP passes only when `allow-loopback-http` is enabled, `require-https` is false, and the remote address is loopback. Other HTTP requests return `RUNNER_HTTPS_REQUIRED`.
 
 - [ ] **Step 1: Write failing AES-GCM and token digest tests**
 
@@ -388,7 +395,7 @@ Use a 12-byte random IV, 128-bit GCM authentication tag, `AES/GCM/NoPadding`, ve
 void enrollmentCanBeConsumedOnlyOnce()
 {
     EnrollmentGrant grant = service.createEnrollment(1L, "runner-hanw", "hanw",
-        "/data/hanw/hw_code/gputrain-test", NOW.plusSeconds(600));
+        "/data/hanw/hw_code/gputrain-test", NOW.plusSeconds(600), "request-key-1");
     RunnerCredentials first = service.register(new RunnerRegistration(
         grant.enrollmentId(), grant.plaintextToken(), "runner-hanw", "hanw"), NOW);
     assertEquals("runner-hanw", first.runnerName());
@@ -399,7 +406,7 @@ void enrollmentCanBeConsumedOnlyOnce()
 
 - [ ] **Step 5: Implement transactional enrollment and controllers**
 
-`RunnerAdminController` exposes `POST /train/runners/enrollments`, requires `train:runner:enroll`, takes owner user ID, Runner name, Linux username, allowed root, and expiry, and returns the token once. `RunnerRegistrationController` exposes `POST /runner-api/v1/register`, is annotated `@Anonymous`, consumes the grant transactionally, creates the Runner, and returns the new secret once. Neither response object exposes secrets through `toString()`.
+`RunnerAdminController` exposes `POST /train/runners/enrollments`, requires `train:runner:enroll`, and takes owner user ID, Runner name, Linux username, allowed root, expiry, and a required idempotency key. Identical retries return the same token until consumption; conflicting key reuse is rejected. `RunnerRegistrationController` exposes `POST /runner-api/v1/register`, is annotated `@Anonymous`, consumes the grant transactionally, clears its temporary ciphertext in the conditional update, creates the Runner, and returns the new secret once. If creation fails, rollback restores the unconsumed grant and its ciphertext. Neither response object exposes secrets through `toString()`.
 
 - [ ] **Step 6: Add configuration without defaults for secrets**
 
@@ -411,9 +418,10 @@ gputrain:
     allowed-clock-skew: 2m
     nonce-ttl: 5m
     require-https: true
+    allow-loopback-http: false
 ```
 
-In `application-local.yml`, set `require-https: false` only for loopback development and retain empty environment-backed secret fields so missing secrets fail when Runner security beans are enabled.
+In `application-local.yml`, set `require-https: false` and `allow-loopback-http: true` only for loopback development. The guard still rejects HTTP from every non-loopback remote address. Retain empty environment-backed secret fields so missing secrets fail when Runner security beans are enabled.
 
 - [ ] **Step 7: Run enrollment tests and commit**
 

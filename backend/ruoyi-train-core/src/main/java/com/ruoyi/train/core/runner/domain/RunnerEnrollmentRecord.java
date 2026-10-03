@@ -4,7 +4,8 @@ import java.time.Instant;
 
 public record RunnerEnrollmentRecord(Long enrollmentId, Long ownerUserId,
         String runnerName, String linuxUsername, String allowedRoot,
-        String tokenDigest, Instant expiresAt, Instant consumedAt, Instant createdAt)
+        String tokenDigest, String tokenCiphertext, String idempotencyKey,
+        Instant expiresAt, Instant consumedAt, Instant createdAt)
 {
     @Override
     public String toString()

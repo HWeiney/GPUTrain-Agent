@@ -19,6 +19,7 @@ class RunnerSecurityPropertiesTest
         RunnerSecurityProperties missing = new RunnerSecurityProperties();
         assertThrows(IllegalStateException.class, missing::getMasterKeyBytes);
         assertThrows(IllegalStateException.class, missing::getEnrollmentPepper);
+        org.junit.jupiter.api.Assertions.assertFalse(missing.isAllowLoopbackHttp());
     }
 
     @Test

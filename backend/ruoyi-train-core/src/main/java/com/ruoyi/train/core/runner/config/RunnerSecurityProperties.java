@@ -13,6 +13,7 @@ public class RunnerSecurityProperties
     private String allowedClockSkew = "2m";
     private String nonceTtl = "5m";
     private boolean requireHttps = true;
+    private boolean allowLoopbackHttp;
 
     public String getMasterKey()
     {
@@ -52,4 +53,6 @@ public class RunnerSecurityProperties
     public void setNonceTtl(String nonceTtl) { this.nonceTtl = nonceTtl; }
     public boolean isRequireHttps() { return requireHttps; }
     public void setRequireHttps(boolean requireHttps) { this.requireHttps = requireHttps; }
+    public boolean isAllowLoopbackHttp() { return allowLoopbackHttp; }
+    public void setAllowLoopbackHttp(boolean allowLoopbackHttp) { this.allowLoopbackHttp = allowLoopbackHttp; }
 }
