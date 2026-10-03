@@ -1,4 +1,12 @@
 # 项目相关配置
+gputrain:
+  runner-security:
+    master-key: ${RUNNER_CREDENTIAL_MASTER_KEY:}
+    enrollment-pepper: ${RUNNER_ENROLLMENT_PEPPER:}
+    allowed-clock-skew: 2m
+    nonce-ttl: 5m
+    require-https: true
+
 ruoyi:
   # 名称
   name: RuoYi

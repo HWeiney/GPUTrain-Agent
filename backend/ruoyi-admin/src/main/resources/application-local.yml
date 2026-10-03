@@ -1,3 +1,12 @@
+# Local Runner endpoints are intended for loopback development only.
+gputrain:
+  runner-security:
+    master-key: ${RUNNER_CREDENTIAL_MASTER_KEY:}
+    enrollment-pepper: ${RUNNER_ENROLLMENT_PEPPER:}
+    allowed-clock-skew: 2m
+    nonce-ttl: 5m
+    require-https: false
+
 spring:
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
