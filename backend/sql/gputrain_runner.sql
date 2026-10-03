@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS train_runner_enrollment (
     allowed_root VARCHAR(1024) NOT NULL,
     token_digest CHAR(64) NOT NULL,
     token_ciphertext VARCHAR(1024) NULL,
-    idempotency_key VARCHAR(128) NOT NULL,
+    idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     expires_at DATETIME(3) NOT NULL,
     consumed_at DATETIME(3) NULL,
     created_at DATETIME(3) NOT NULL,
@@ -30,6 +30,66 @@ CREATE TABLE IF NOT EXISTS train_runner_enrollment (
     UNIQUE KEY uk_enrollment_digest (token_digest),
     UNIQUE KEY uk_enrollment_idempotency (idempotency_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Upgrade intermediate phase-two schemas in place. Each DDL step is guarded so
+-- this same file remains safe for fresh initialization and repeated manual runs.
+SET @runner_enrollment_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'train_runner_enrollment'
+       AND COLUMN_NAME = 'token_ciphertext') = 0,
+    'ALTER TABLE train_runner_enrollment ADD COLUMN token_ciphertext VARCHAR(1024) NULL AFTER token_digest',
+    'SELECT 1'
+);
+PREPARE runner_enrollment_stmt FROM @runner_enrollment_ddl;
+EXECUTE runner_enrollment_stmt;
+DEALLOCATE PREPARE runner_enrollment_stmt;
+
+SET @runner_enrollment_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'train_runner_enrollment'
+       AND COLUMN_NAME = 'idempotency_key') = 0,
+    'ALTER TABLE train_runner_enrollment ADD COLUMN idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL AFTER token_ciphertext',
+    'SELECT 1'
+);
+PREPARE runner_enrollment_stmt FROM @runner_enrollment_ddl;
+EXECUTE runner_enrollment_stmt;
+DEALLOCATE PREPARE runner_enrollment_stmt;
+
+-- Legacy rows have no caller key. Enrollment ID makes generated keys unique;
+-- UUID further separates this reserved migration namespace from caller keys.
+UPDATE train_runner_enrollment
+SET idempotency_key = CONCAT('legacy-', enrollment_id, '-', REPLACE(UUID(), '-', ''))
+WHERE idempotency_key IS NULL OR TRIM(idempotency_key) = '';
+
+SET @runner_enrollment_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'train_runner_enrollment'
+       AND COLUMN_NAME = 'idempotency_key'
+       AND (IS_NULLABLE = 'YES' OR COLLATION_NAME <> 'utf8mb4_0900_bin'
+            OR CHARACTER_MAXIMUM_LENGTH <> 128)) > 0,
+    'ALTER TABLE train_runner_enrollment MODIFY COLUMN idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL',
+    'SELECT 1'
+);
+PREPARE runner_enrollment_stmt FROM @runner_enrollment_ddl;
+EXECUTE runner_enrollment_stmt;
+DEALLOCATE PREPARE runner_enrollment_stmt;
+
+SET @runner_enrollment_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'train_runner_enrollment'
+       AND INDEX_NAME = 'uk_enrollment_idempotency'
+       AND NON_UNIQUE = 0
+       AND COLUMN_NAME = 'idempotency_key') = 0,
+    'ALTER TABLE train_runner_enrollment ADD UNIQUE KEY uk_enrollment_idempotency (idempotency_key)',
+    'SELECT 1'
+);
+PREPARE runner_enrollment_stmt FROM @runner_enrollment_ddl;
+EXECUTE runner_enrollment_stmt;
+DEALLOCATE PREPARE runner_enrollment_stmt;
 
 CREATE TABLE IF NOT EXISTS train_runner_command (
     command_id BIGINT NOT NULL AUTO_INCREMENT,

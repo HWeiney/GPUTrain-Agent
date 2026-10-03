@@ -44,7 +44,6 @@
         WHERE enrollment_id = #{enrollmentId}
           AND token_digest = #{tokenDigest}
           AND consumed_at IS NULL
-          AND token_ciphertext IS NOT NULL
           AND expires_at &gt; #{consumedAt}
     </update>
 </mapper>

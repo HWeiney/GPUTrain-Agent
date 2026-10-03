@@ -8,6 +8,7 @@ import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord;
 import com.ruoyi.train.core.runner.domain.RunnerRecord;
@@ -46,7 +47,7 @@ public class RunnerEnrollmentService
         this.random = Objects.requireNonNull(random, "random");
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public EnrollmentGrant createEnrollment(long ownerUserId, String runnerName, String linuxUsername,
             String allowedRoot, Instant expiresAt, String idempotencyKey)
     {
@@ -55,7 +56,8 @@ public class RunnerEnrollmentService
             throw new IllegalArgumentException("Enrollment idempotency key must contain 1 to 128 characters");
         RunnerEnrollmentRecord existing = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
         if (existing != null)
-            return existingGrant(existing, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
+            return existingGrant(existing, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt,
+                    idempotencyKey);
         if (!expiresAt.isAfter(Instant.now()))
             throw new IllegalArgumentException("Enrollment expiry must be in the future");
         String plaintextToken = randomToken();
@@ -74,18 +76,21 @@ public class RunnerEnrollmentService
             RunnerEnrollmentRecord winner = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
             if (winner == null)
                 throw duplicate;
-            return existingGrant(winner, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
+            return existingGrant(winner, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt,
+                    idempotencyKey);
         }
         RunnerEnrollmentRecord inserted = enrollmentMapper.findByIdempotencyKey(idempotencyKey);
         if (inserted == null || inserted.enrollmentId() == null)
             throw new IllegalStateException("Created Runner enrollment could not be retrieved");
-        return existingGrant(inserted, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt);
+        return existingGrant(inserted, ownerUserId, runnerName, linuxUsername, allowedRoot, expiresAt,
+                idempotencyKey);
     }
 
     private EnrollmentGrant existingGrant(RunnerEnrollmentRecord record, long ownerUserId,
-            String runnerName, String linuxUsername, String allowedRoot, Instant expiresAt)
+            String runnerName, String linuxUsername, String allowedRoot, Instant expiresAt, String idempotencyKey)
     {
-        if (record.ownerUserId() != ownerUserId || !record.runnerName().equals(runnerName)
+        if (!idempotencyKeyEquals(record.idempotencyKey(), idempotencyKey)
+                || record.ownerUserId() != ownerUserId || !record.runnerName().equals(runnerName)
                 || !record.linuxUsername().equals(linuxUsername)
                 || !record.allowedRoot().equals(allowedRoot) || !record.expiresAt().equals(expiresAt))
             throw protocolError(RunnerErrorCode.ENROLLMENT_INVALID,
@@ -100,7 +105,7 @@ public class RunnerEnrollmentService
                 allowedRoot, expiresAt);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public RunnerCredentials register(RunnerRegistration request, Instant now)
     {
         Objects.requireNonNull(request, "request");
@@ -149,5 +154,10 @@ public class RunnerEnrollmentService
     private static RunnerProtocolException protocolError(RunnerErrorCode code, String message)
     {
         return new RunnerProtocolException(code, message);
+    }
+
+    private static boolean idempotencyKeyEquals(String storedKey, String requestedKey)
+    {
+        return storedKey != null && storedKey.equals(requestedKey);
     }
 }

@@ -258,6 +258,7 @@ git commit -m "feat: define runner protocol and request signing"
 - Produces: `RunnerEnrollmentMapper.consume(enrollmentId, tokenDigest, consumedAt)` returning exactly one only for an unexpired, unconsumed row, while clearing its temporary token ciphertext in the same update.
 - Produces: `RunnerCommandMapper.leaseNext(runnerId, now, leasedUntil)` with transaction-level row locking.
 - Produces: unique database keys on Runner name, enrollment token digest, enrollment idempotency key, and `(runner_id, idempotency_key)`.
+- The enrollment idempotency key uses MySQL `utf8mb4_0900_bin` collation. Keep `backend/sql/gputrain_runner.sql` as the single fresh-install/manual-upgrade source: conditionally add missing token-ciphertext and idempotency columns, backfill legacy null/blank keys with row-specific migration values, make the key `NOT NULL` with binary collation, and conditionally add its unique index so reruns are safe.
 
 - [ ] **Step 1: Write a failing schema contract test that reads the SQL resource**
 
@@ -352,6 +353,7 @@ git commit -m "feat: persist runner identities and commands"
 - Produces: `RunnerCredentials register(RunnerRegistration request, Instant now)`.
 - Produces: `RunnerCredentialCipher.encrypt(byte[] plaintext)` and `decrypt(String encoded)` using `version.iv.ciphertext` Base64URL fields.
 - Enrollment creation requires an idempotency key. A matching key with identical owner/name/Linux user/root/expiry returns the existing token by decrypting its temporary AES-GCM ciphertext. Reusing a key with different fields returns `ENROLLMENT_INVALID`. A unique database key handles concurrent duplicate insertion; the losing request rereads and returns the committed winner. Successful registration clears the token ciphertext in the conditional consume update; transaction rollback preserves it if Runner creation fails. Replays after successful consumption return `ENROLLMENT_ALREADY_USED`.
+- `createEnrollment` and `register` use `READ_COMMITTED` isolation so duplicate-key winner rereads and concurrent-consume classification see the latest committed row. `existingGrant` also compares the stored idempotency key with exact Java string equality.
 - Both credential-bearing endpoints call `RunnerTransportSecurityGuard`: HTTPS always passes; HTTP passes only when `allow-loopback-http` is enabled, `require-https` is false, and the remote address is loopback. Other HTTP requests return `RUNNER_HTTPS_REQUIRED`.
 
 - [ ] **Step 1: Write failing AES-GCM and token digest tests**

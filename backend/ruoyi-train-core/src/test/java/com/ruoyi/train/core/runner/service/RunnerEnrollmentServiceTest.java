@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
@@ -16,6 +17,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord;
@@ -98,15 +101,62 @@ class RunnerEnrollmentServiceTest
     }
 
     @Test
+    void idempotencyKeyMatchingIsCaseSensitiveEvenIfMapperLookupIsNot()
+    {
+        InMemoryEnrollments enrollments = new InMemoryEnrollments();
+        RunnerEnrollmentService service = service(enrollments, new InMemoryRunners());
+        Instant expires = NOW.plusSeconds(600);
+        service.createEnrollment(1L, "runner-hanw", "hanw", "/data/hanw", expires, "Key");
+        enrollments.caseInsensitiveIdempotencyLookup = true;
+        RunnerProtocolException exception = assertThrows(RunnerProtocolException.class,
+                () -> service.createEnrollment(1L, "runner-hanw", "hanw", "/data/hanw", expires, "key"));
+        assertEquals(com.ruoyi.train.runner.protocol.RunnerErrorCode.ENROLLMENT_INVALID, exception.code());
+        assertEquals(1, enrollments.byId.size());
+    }
+
+    @Test
+    void enrollmentRereadTransactionsUseReadCommittedIsolation() throws Exception
+    {
+        Transactional create = RunnerEnrollmentService.class.getMethod("createEnrollment", long.class,
+                String.class, String.class, String.class, Instant.class, String.class).getAnnotation(Transactional.class);
+        Transactional register = RunnerEnrollmentService.class.getMethod("register",
+                RunnerRegistration.class, Instant.class).getAnnotation(Transactional.class);
+        assertNotNull(create);
+        assertNotNull(register);
+        assertEquals(Isolation.READ_COMMITTED, create.isolation());
+        assertEquals(Isolation.READ_COMMITTED, register.isolation());
+        assertFalse(create.readOnly());
+    }
+
+    @Test
     void concurrentDuplicateInsertReadsAndReturnsWinningToken()
     {
         InMemoryEnrollments enrollments = new InMemoryEnrollments();
         enrollments.winnerForNextDuplicate = record("concurrent-key", "winner-token", NOW.plusSeconds(600));
         RunnerEnrollmentService service = service(enrollments, new InMemoryRunners());
-        EnrollmentGrant grant = service.createEnrollment(1L, "runner-hanw", "hanw", "/data/hanw",
+        SnapshotTransactionManager transactionManager = new SnapshotTransactionManager(
+                enrollments, new InMemoryRunners());
+        RunnerEnrollmentService transactional = transactionalProxy(service, transactionManager);
+        EnrollmentGrant grant = transactional.createEnrollment(1L, "runner-hanw", "hanw", "/data/hanw",
                 NOW.plusSeconds(600), "concurrent-key");
         assertEquals("winner-token", grant.plaintextToken());
         assertEquals(1, enrollments.byId.size());
+        assertEquals(1, transactionManager.commitCount);
+    }
+
+    @Test
+    void concurrentRegistrationLoserClassifiesTheCommittedConsume()
+    {
+        InMemoryEnrollments enrollments = new InMemoryEnrollments();
+        RunnerEnrollmentService service = service(enrollments, new InMemoryRunners());
+        EnrollmentGrant grant = service.createEnrollment(1L, "runner-hanw", "hanw", "/data/hanw",
+                NOW.plusSeconds(600), "registration-race-key");
+        enrollments.consumeAsConcurrentLoser = true;
+
+        RunnerProtocolException exception = assertThrows(RunnerProtocolException.class,
+                () -> service.register(new RunnerRegistration(grant.enrollmentId(), grant.plaintextToken(),
+                        "runner-hanw", "hanw"), NOW));
+        assertEquals(com.ruoyi.train.runner.protocol.RunnerErrorCode.ENROLLMENT_ALREADY_USED, exception.code());
     }
 
     @Test
@@ -159,6 +209,8 @@ class RunnerEnrollmentServiceTest
         private final Map<Long, RunnerEnrollmentRecord> byId = new HashMap<>();
         private final AtomicLong ids = new AtomicLong(1);
         private RunnerEnrollmentRecord winnerForNextDuplicate;
+        private boolean caseInsensitiveIdempotencyLookup;
+        private boolean consumeAsConcurrentLoser;
         private Map<Long, RunnerEnrollmentRecord> snapshot() { return new HashMap<>(byId); }
         private void restore(Map<Long, RunnerEnrollmentRecord> snapshot)
         {
@@ -190,11 +242,20 @@ class RunnerEnrollmentServiceTest
         }
         @Override public RunnerEnrollmentRecord findByIdempotencyKey(String key)
         {
-            return byId.values().stream().filter(e -> e.idempotencyKey().equals(key)).findFirst().orElse(null);
+            return byId.values().stream().filter(e -> caseInsensitiveIdempotencyLookup
+                    ? e.idempotencyKey().equalsIgnoreCase(key) : e.idempotencyKey().equals(key))
+                    .findFirst().orElse(null);
         }
         @Override public int consume(Long id, String digest, Instant at)
         {
             RunnerEnrollmentRecord e = byId.get(id);
+            if (consumeAsConcurrentLoser && e != null)
+            {
+                byId.put(id, new RunnerEnrollmentRecord(id, e.ownerUserId(), e.runnerName(), e.linuxUsername(),
+                        e.allowedRoot(), e.tokenDigest(), null, e.idempotencyKey(), e.expiresAt(), at, e.createdAt()));
+                consumeAsConcurrentLoser = false;
+                return 0;
+            }
             if (e == null || !e.tokenDigest().equals(digest) || e.consumedAt() != null
                     || !e.expiresAt().isAfter(at)) return 0;
             byId.put(id, new RunnerEnrollmentRecord(id, e.ownerUserId(), e.runnerName(), e.linuxUsername(),
@@ -237,6 +298,7 @@ class RunnerEnrollmentServiceTest
         private final InMemoryRunners runners;
         private Map<Long, RunnerEnrollmentRecord> enrollmentSnapshot;
         private Map<Long, RunnerRecord> runnerSnapshot;
+        private int commitCount;
 
         private SnapshotTransactionManager(InMemoryEnrollments enrollments, InMemoryRunners runners)
         {
@@ -253,6 +315,7 @@ class RunnerEnrollmentServiceTest
 
         @Override public void commit(TransactionStatus status)
         {
+            commitCount++;
             enrollmentSnapshot = null;
             runnerSnapshot = null;
         }

@@ -57,6 +57,24 @@ class RunnerSchemaContractTest
     }
 
     @Test
+    void enrollmentSchemaUpgradesIntermediateTablesIdempotently() throws IOException
+    {
+        String sql = Files.readString(Path.of("../sql/gputrain_runner.sql"));
+        assertAll(
+            () -> assertTrue(sql.contains("information_schema.COLUMNS")),
+            () -> assertTrue(sql.contains("ADD COLUMN token_ciphertext VARCHAR(1024) NULL")),
+            () -> assertTrue(sql.contains("ADD COLUMN idempotency_key VARCHAR(128)")),
+            () -> assertTrue(sql.contains("SET @runner_enrollment_ddl = IF(")),
+            () -> assertTrue(sql.contains("UUID()")),
+            () -> assertTrue(sql.contains("WHERE idempotency_key IS NULL OR TRIM(idempotency_key) = ''")),
+            () -> assertTrue(sql.contains("idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL")),
+            () -> assertTrue(sql.contains("MODIFY COLUMN idempotency_key VARCHAR(128)")),
+            () -> assertTrue(sql.contains("COLLATE utf8mb4_0900_bin")),
+            () -> assertTrue(sql.contains("information_schema.STATISTICS")),
+            () -> assertTrue(sql.contains("ADD UNIQUE KEY uk_enrollment_idempotency (idempotency_key)")));
+    }
+
+    @Test
     void enrollmentConsumeRequiresDigestAndUnexpiredUnconsumedGrant() throws IOException
     {
         String xml = mapperXml("RunnerEnrollmentMapper");
