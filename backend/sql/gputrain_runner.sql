@@ -132,3 +132,31 @@ CREATE TABLE IF NOT EXISTS train_runner_process (
     CONSTRAINT fk_process_command FOREIGN KEY (command_id) REFERENCES train_runner_command (command_id),
     CONSTRAINT fk_process_runner FOREIGN KEY (runner_id) REFERENCES train_runner (runner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Runner permissions are hidden under the existing GPUTrain directory.
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, route_name, is_frame, is_cache,
+     menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT permission.menu_name, parent.menu_id, permission.order_num, '#', NULL, '', '', 1, 0,
+       'F', '1', '0', permission.perms, '#', 'admin', NOW(), 'Runner management permission'
+FROM (
+    SELECT 'Runner enrollment' AS menu_name, 1 AS order_num, 'train:runner:enroll' AS perms
+    UNION ALL SELECT 'Runner view', 2, 'train:runner:view'
+    UNION ALL SELECT 'Runner command', 3, 'train:runner:command'
+) permission
+JOIN sys_menu parent ON parent.menu_name = 'GPUTrain' AND parent.parent_id = 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_menu child WHERE child.parent_id = parent.menu_id
+      AND child.perms = permission.perms
+);
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1, menu.menu_id
+FROM sys_menu menu
+JOIN sys_menu parent ON parent.menu_id = menu.parent_id
+WHERE parent.menu_name = 'GPUTrain' AND parent.parent_id = 0
+  AND menu.perms IN ('train:runner:enroll', 'train:runner:view', 'train:runner:command')
+  AND NOT EXISTS (
+      SELECT 1 FROM sys_role_menu role_menu
+      WHERE role_menu.role_id = 1 AND role_menu.menu_id = menu.menu_id
+  );

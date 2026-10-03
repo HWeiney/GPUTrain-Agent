@@ -64,11 +64,19 @@
         UPDATE train_runner_command
         SET status = 'RUNNING', updated_at = #{now}
         WHERE command_id = #{commandId} AND status = 'LEASED'
+          AND lease_until = #{leaseUntil} AND lease_until &gt;= #{now}
     </update>
 
     <update id="complete">
         UPDATE train_runner_command
         SET status = #{status}, result = #{result}, error_code = #{errorCode}, updated_at = #{now}
         WHERE command_id = #{commandId} AND status = 'RUNNING'
+    </update>
+
+    <update id="markRejected">
+        UPDATE train_runner_command
+        SET status = 'REJECTED', result = #{result}, error_code = #{errorCode}, updated_at = #{now}
+        WHERE command_id = #{commandId} AND status = 'LEASED'
+          AND lease_until = #{leaseUntil} AND lease_until &gt;= #{now}
     </update>
 </mapper>

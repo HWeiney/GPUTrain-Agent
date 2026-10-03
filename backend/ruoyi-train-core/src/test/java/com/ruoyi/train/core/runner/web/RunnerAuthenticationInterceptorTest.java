@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.DispatcherType;
 import com.ruoyi.train.core.runner.service.RunnerHeartbeatService;
 import com.ruoyi.train.runner.protocol.RunnerHeartbeat;
 import com.ruoyi.train.core.runner.config.RunnerSecurityProperties;
@@ -59,6 +60,18 @@ class RunnerAuthenticationInterceptorTest
         assertEquals("1", request.getAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE));
         assertArrayEquals(body, request.getInputStream().readAllBytes());
         assertArrayEquals(body, request.getInputStream().readAllBytes());
+    }
+
+    @Test
+    void asyncPollDispatchKeepsOriginalAuthenticatedIdentityWithoutReplayingNonce() throws Exception
+    {
+        MockHttpServletRequest source = signedRequest("/runner-api/v1/commands/poll", new byte[0]);
+        CachedBodyHttpServletRequest request = new CachedBodyHttpServletRequest(source);
+        assertTrue(interceptor.preHandle(request, new MockHttpServletResponse(), new Object()));
+        source.setDispatcherType(DispatcherType.ASYNC);
+        assertTrue(interceptor.preHandle(request, new MockHttpServletResponse(), new Object()));
+        assertEquals("1", request.getAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE));
+        assertEquals(Set.of("1:nonce-1"), claimed);
     }
 
     @Test

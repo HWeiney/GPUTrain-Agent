@@ -35,9 +35,13 @@ public interface RunnerCommandMapper
     }
 
     int markRunning(@Param("commandId") Long commandId,
-            @Param("now") Instant now);
+            @Param("now") Instant now, @Param("leaseUntil") Instant leaseUntil);
 
     int complete(@Param("commandId") Long commandId,
             @Param("status") String status, @Param("result") String result,
             @Param("errorCode") String errorCode, @Param("now") Instant now);
+
+    int markRejected(@Param("commandId") Long commandId, @Param("now") Instant now,
+            @Param("result") String result, @Param("errorCode") String errorCode,
+            @Param("leaseUntil") Instant leaseUntil);
 }

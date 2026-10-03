@@ -40,6 +40,20 @@ class RunnerSchemaContractTest
     }
 
     @Test
+    void runnerPermissionsAreIdempotentAndAdminOnly() throws IOException
+    {
+        String sql = Files.readString(Path.of("../sql/gputrain_runner.sql"));
+        assertAll(
+            () -> assertTrue(sql.contains("'train:runner:enroll'")),
+            () -> assertTrue(sql.contains("'train:runner:view'")),
+            () -> assertTrue(sql.contains("'train:runner:command'")),
+            () -> assertTrue(sql.contains("parent.menu_name = 'GPUTrain'")),
+            () -> assertTrue(sql.contains("SELECT 1, menu.menu_id")),
+            () -> assertTrue(sql.contains("role_menu.role_id = 1")),
+            () -> assertTrue(sql.contains("WHERE NOT EXISTS")));
+    }
+
+    @Test
     void schemaDefinesRequiredKeysAndDurableTypes() throws IOException
     {
         String sql = Files.readString(Path.of("../sql/gputrain_runner.sql"));

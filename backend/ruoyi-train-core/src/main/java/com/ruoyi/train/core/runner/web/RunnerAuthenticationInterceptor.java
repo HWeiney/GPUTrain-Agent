@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.DispatcherType;
 import com.ruoyi.train.core.runner.security.RunnerRequestVerifier;
 import com.ruoyi.train.core.runner.security.RunnerTransportSecurityGuard;
 import com.ruoyi.train.core.runner.security.SignedRunnerRequest;
@@ -33,6 +34,14 @@ public class RunnerAuthenticationInterceptor implements HandlerInterceptor
         String path = path(request);
         if (!isSignedPath(path))
             return true;
+        if (request.getDispatcherType() == DispatcherType.ASYNC)
+        {
+            if (request.getAttribute(RUNNER_ID_ATTRIBUTE) instanceof String authenticatedId
+                    && !authenticatedId.isBlank())
+                return true;
+            RunnerProtocolExceptionHandler.writeError(response, invalid());
+            return false;
+        }
         try
         {
             transportGuard.assertAllowed(request.isSecure(), request.getRemoteAddr());
