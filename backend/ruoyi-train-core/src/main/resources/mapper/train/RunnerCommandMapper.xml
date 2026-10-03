@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.runner.mapper.RunnerCommandMapper">
+    <resultMap id="CommandResult" type="com.ruoyi.train.core.runner.domain.RunnerCommandRecord">
+        <constructor>
+            <idArg column="command_id" javaType="java.lang.Long"/>
+            <arg column="command_uuid" javaType="java.lang.String"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="command_type" javaType="java.lang.String"/>
+            <arg column="payload" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="lease_until" javaType="java.time.Instant"/>
+            <arg column="attempt_count" javaType="int"/>
+            <arg column="result" javaType="java.lang.String"/>
+            <arg column="error_code" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.runner.domain.RunnerCommandRecord">
+        INSERT INTO train_runner_command
+            (command_uuid, runner_id, command_type, payload, idempotency_key,
+             status, lease_until, attempt_count, result, error_code, created_at, updated_at)
+        VALUES
+            (#{commandUuid}, #{runnerId}, #{commandType}, #{payload}, #{idempotencyKey},
+             #{status}, #{leaseUntil}, #{attemptCount}, #{result}, #{errorCode},
+             #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findById" resultMap="CommandResult">
+        SELECT * FROM train_runner_command WHERE command_id = #{commandId}
+    </select>
+
+    <select id="findByUuid" resultMap="CommandResult">
+        SELECT * FROM train_runner_command WHERE command_uuid = #{commandUuid}
+    </select>
+
+    <select id="findByRunnerAndIdempotencyKey" resultMap="CommandResult">
+        SELECT * FROM train_runner_command
+        WHERE runner_id = #{runnerId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="selectLeaseCandidateForUpdate" resultType="java.lang.Long">
+        SELECT command_id
+        FROM train_runner_command
+        WHERE runner_id = #{runnerId}
+          AND (status = 'QUEUED' OR (status = 'LEASED' AND lease_until &lt; #{now}))
+        ORDER BY created_at, command_id
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <update id="markLeased">
+        UPDATE train_runner_command
+        SET status = 'LEASED', lease_until = #{leasedUntil},
+            attempt_count = attempt_count + 1, updated_at = #{now}
+        WHERE command_id = #{commandId}
+          AND (status = 'QUEUED' OR (status = 'LEASED' AND lease_until &lt; #{now}))
+    </update>
+
+    <update id="markRunning">
+        UPDATE train_runner_command
+        SET status = 'RUNNING', updated_at = #{now}
+        WHERE command_id = #{commandId} AND status = 'LEASED'
+    </update>
+
+    <update id="complete">
+        UPDATE train_runner_command
+        SET status = #{status}, result = #{result}, error_code = #{errorCode}, updated_at = #{now}
+        WHERE command_id = #{commandId} AND status = 'RUNNING'
+    </update>
+</mapper>

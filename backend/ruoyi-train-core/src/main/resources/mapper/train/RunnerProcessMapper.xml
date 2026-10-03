@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.runner.mapper.RunnerProcessMapper">
+    <resultMap id="ProcessResult" type="com.ruoyi.train.core.runner.domain.RunnerProcessRecord">
+        <constructor>
+            <idArg column="process_id" javaType="java.lang.Long"/>
+            <arg column="command_id" javaType="java.lang.Long"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="pid" javaType="long"/>
+            <arg column="process_started_at" javaType="java.time.Instant"/>
+            <arg column="executable" javaType="java.lang.String"/>
+            <arg column="arguments_sha256" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="exit_code" javaType="java.lang.Integer"/>
+            <arg column="error_code" javaType="java.lang.String"/>
+            <arg column="last_seen_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.runner.domain.RunnerProcessRecord">
+        INSERT INTO train_runner_process
+            (command_id, runner_id, pid, process_started_at, executable,
+             arguments_sha256, status, exit_code, error_code, last_seen_at, created_at, updated_at)
+        VALUES
+            (#{commandId}, #{runnerId}, #{pid}, #{processStartedAt}, #{executable},
+             #{argumentsSha256}, #{status}, #{exitCode}, #{errorCode},
+             #{lastSeenAt}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findByCommandId" resultMap="ProcessResult">
+        SELECT * FROM train_runner_process WHERE command_id = #{commandId}
+    </select>
+
+    <update id="updateSnapshot">
+        UPDATE train_runner_process
+        SET status = #{status}, exit_code = #{exitCode}, error_code = #{errorCode},
+            last_seen_at = #{lastSeenAt}, updated_at = #{lastSeenAt}
+        WHERE command_id = #{commandId}
+    </update>
+</mapper>

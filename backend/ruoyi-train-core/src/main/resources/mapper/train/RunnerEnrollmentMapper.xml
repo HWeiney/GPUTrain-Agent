@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.runner.mapper.RunnerEnrollmentMapper">
+    <resultMap id="EnrollmentResult" type="com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord">
+        <constructor>
+            <idArg column="enrollment_id" javaType="java.lang.Long"/>
+            <arg column="owner_user_id" javaType="java.lang.Long"/>
+            <arg column="runner_name" javaType="java.lang.String"/>
+            <arg column="linux_username" javaType="java.lang.String"/>
+            <arg column="allowed_root" javaType="java.lang.String"/>
+            <arg column="token_digest" javaType="java.lang.String"/>
+            <arg column="expires_at" javaType="java.time.Instant"/>
+            <arg column="consumed_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.runner.domain.RunnerEnrollmentRecord">
+        INSERT INTO train_runner_enrollment
+            (owner_user_id, runner_name, linux_username, allowed_root, token_digest,
+             expires_at, consumed_at, created_at)
+        VALUES
+            (#{ownerUserId}, #{runnerName}, #{linuxUsername}, #{allowedRoot}, #{tokenDigest},
+             #{expiresAt}, #{consumedAt}, #{createdAt})
+    </insert>
+
+    <select id="findById" resultMap="EnrollmentResult">
+        SELECT * FROM train_runner_enrollment WHERE enrollment_id = #{enrollmentId}
+    </select>
+
+    <select id="findByTokenDigest" resultMap="EnrollmentResult">
+        SELECT * FROM train_runner_enrollment WHERE token_digest = #{tokenDigest}
+    </select>
+
+    <update id="consume">
+        UPDATE train_runner_enrollment
+        SET consumed_at = #{consumedAt}
+        WHERE enrollment_id = #{enrollmentId}
+          AND token_digest = #{tokenDigest}
+          AND consumed_at IS NULL
+          AND expires_at &gt; #{consumedAt}
+    </update>
+</mapper>

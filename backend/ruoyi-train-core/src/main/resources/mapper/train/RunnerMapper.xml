@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.runner.mapper.RunnerMapper">
+    <resultMap id="RunnerResult" type="com.ruoyi.train.core.runner.domain.RunnerRecord">
+        <constructor>
+            <idArg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="runner_name" javaType="java.lang.String"/>
+            <arg column="linux_username" javaType="java.lang.String"/>
+            <arg column="allowed_root" javaType="java.lang.String"/>
+            <arg column="secret_ciphertext" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="last_seen_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.runner.domain.RunnerRecord">
+        INSERT INTO train_runner
+            (runner_name, linux_username, allowed_root, secret_ciphertext, status,
+             last_seen_at, created_at, updated_at)
+        VALUES
+            (#{runnerName}, #{linuxUsername}, #{allowedRoot}, #{secretCiphertext}, #{status},
+             #{lastSeenAt}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findById" resultMap="RunnerResult">
+        SELECT * FROM train_runner WHERE runner_id = #{runnerId}
+    </select>
+
+    <select id="findByName" resultMap="RunnerResult">
+        SELECT * FROM train_runner WHERE runner_name = #{runnerName}
+    </select>
+
+    <update id="updateHeartbeat">
+        UPDATE train_runner
+        SET last_seen_at = #{lastSeenAt}, updated_at = #{lastSeenAt}
+        WHERE runner_id = #{runnerId}
+    </update>
+</mapper>
