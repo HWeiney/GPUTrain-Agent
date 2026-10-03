@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 -- GPUTrain菜单与管理员授权，可重复执行。
 
 INSERT INTO sys_menu
