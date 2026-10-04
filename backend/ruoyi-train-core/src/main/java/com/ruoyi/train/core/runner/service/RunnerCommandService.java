@@ -6,6 +6,7 @@ import java.time.Clock;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -30,6 +31,7 @@ public class RunnerCommandService
     private final ObjectMapper json;
     private final Clock clock;
 
+    @Autowired
     public RunnerCommandService(RunnerCommandMapper mapper, ObjectMapper json)
     { this(mapper, json, Clock.systemUTC()); }
 
