@@ -5,8 +5,9 @@ import java.net.*;
 import java.nio.file.*;
 import java.time.*;
 import java.util.*;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import com.sun.net.httpserver.HttpServer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -18,6 +19,47 @@ import com.ruoyi.train.runner.protocol.*;
 class RunnerApplicationTest
 {
     @TempDir Path root;
+    @Test void heartbeatRejectionWhilePollWaitsPreventsReturnedLeaseFromStarting() throws Exception
+    {
+        UUID id = UUID.randomUUID();
+        var lease = new RunnerCommandLease(id, RunnerCommandType.START_PROCESS,
+            new ProcessSpec(root.toString(), ProcessSupervisorTest.java(), ProcessSupervisorTest.args("--mode", "success"), Map.of(), 10, "revoked"), null, Instant.now().plusSeconds(30), 1);
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        CountDownLatch pollStarted = new CountDownLatch(1); CountDownLatch heartbeatRejected = new CountDownLatch(1);
+        AtomicInteger reports = new AtomicInteger();
+        AtomicReference<RunnerApplication> application = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            pollStarted.countDown();
+            try { assertTrue(heartbeatRejected.await(2, TimeUnit.SECONDS)); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (!application.get().communicationTerminated() && System.nanoTime() < deadline) Thread.onSpinWait();
+            assertTrue(application.get().communicationTerminated());
+            byte[] body = json.writeValueAsBytes(lease);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
+        server.createContext("/runner-api/v1/heartbeat", exchange -> {
+            try { assertTrue(pollStarted.await(2, TimeUnit.SECONDS)); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            reject(exchange, "RUNNER_AUTH_INVALID"); heartbeatRejected.countDown();
+        });
+        server.createContext("/runner-api/v1/commands/" + id + "/reports", exchange -> {
+            reports.incrementAndGet(); exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.start();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (RunnerApplication app = application(server))
+        {
+            application.set(app);
+            Future<?> run = executor.submit(() -> { try { app.run(); } catch (Exception failure) { throw new CompletionException(failure); } });
+            ExecutionException failure = assertThrows(ExecutionException.class, () -> run.get(4, TimeUnit.SECONDS));
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, ((RunnerProtocolException) failure.getCause().getCause()).code());
+            assertEquals(0, reports.get());
+            assertFalse(Files.exists(root.resolve(".gputrain/logs")));
+        }
+        finally { executor.shutdownNow(); server.stop(0); }
+    }
     @Test void permanentAuthenticationRejectionStopsRunWithoutRetrying() throws Exception
     {
         AtomicInteger polls = new AtomicInteger();

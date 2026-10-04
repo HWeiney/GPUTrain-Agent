@@ -23,6 +23,7 @@ public final class RunnerApplication implements AutoCloseable
     private final ScheduledExecutorService heartbeats = Executors.newSingleThreadScheduledExecutor();
     private final RetryBackoff controlBackoff = new RetryBackoff();
     private final RetryBackoff heartbeatBackoff = new RetryBackoff();
+    private final Object communicationGate = new Object();
     private volatile boolean closed;
     private volatile RuntimeException terminalFailure;
     private volatile IOException terminalTransportFailure;
@@ -99,7 +100,11 @@ public final class RunnerApplication implements AutoCloseable
         }
         flushReports();
         Optional<RunnerCommandLease> next = client.poll();
-        if (next.isPresent()) execute(next.get());
+        synchronized (communicationGate)
+        {
+            requireCommunicationAllowed();
+            if (next.isPresent()) execute(next.get());
+        }
         flushReports();
     }
 
@@ -140,6 +145,7 @@ public final class RunnerApplication implements AutoCloseable
     {
         while (!pending.isEmpty())
         {
+            requireCommunicationAllowed();
             PendingReport report = pending.getFirst();
             try { client.report(report.commandId(), report.report()); pending.removeFirst(); }
             catch (RunnerProtocolException failure)
@@ -179,12 +185,20 @@ public final class RunnerApplication implements AutoCloseable
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
         catch (RunnerProtocolException failure)
         {
-            if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) { terminalFailure = failure; return; }
+            if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE)
+            {
+                synchronized (communicationGate) { terminalFailure = failure; }
+                return;
+            }
             nextDelay = heartbeatBackoff.nextDelayMillis();
         }
         catch (IOException failure)
         {
-            if (!retryable(failure)) { terminalTransportFailure = failure; return; }
+            if (!retryable(failure))
+            {
+                synchronized (communicationGate) { terminalTransportFailure = failure; }
+                return;
+            }
             nextDelay = heartbeatBackoff.nextDelayMillis();
         }
         catch (RuntimeException failure) { terminalFailure = failure; return; }
@@ -199,6 +213,9 @@ public final class RunnerApplication implements AutoCloseable
 
     private static boolean retryable(IOException failure)
     { return !(failure instanceof RunnerControlClient.HttpFailure http) || http.retryable(); }
+
+    boolean communicationTerminated()
+    { return terminalFailure != null || terminalTransportFailure != null; }
 
     @Override public void close()
     {
