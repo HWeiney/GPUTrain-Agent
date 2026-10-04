@@ -188,6 +188,7 @@
         <module>ruoyi-generator</module>
         <module>ruoyi-common</module>
         <module>ruoyi-train-runner-protocol</module>
+        <module>ruoyi-train-runner</module>
         <module>ruoyi-train-core</module>
         <module>ruoyi-train-monitor</module>
         <module>ruoyi-train-agent</module>
