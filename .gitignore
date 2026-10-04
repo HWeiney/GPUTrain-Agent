@@ -8,4 +8,7 @@
 **/node_modules/
 **/dist/
 deploy/data/
+deploy/runner/build/
+**/runner.properties
+**/runner.secret
 *.log

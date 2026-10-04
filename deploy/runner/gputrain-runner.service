@@ -1,0 +1,19 @@
+[Unit]
+Description=GPUTrain user Runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/data/hanw/hw_code/gputrain-test
+ExecStart=/usr/bin/java -jar /data/hanw/hw_code/gputrain-test/runner/ruoyi-train-runner.jar /data/hanw/hw_code/gputrain-test/config/runner.properties
+Restart=on-failure
+RestartSec=5
+# Fixture processes must survive a Runner restart for identity reconciliation.
+KillMode=process
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

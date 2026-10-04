@@ -1,0 +1,11 @@
+# Copy to /data/hanw/hw_code/gputrain-test/config/runner.properties after registration.
+# Use the HTTPS origin of the control plane; non-loopback HTTP is rejected.
+controlPlaneUrl=https://control.example.test
+runnerId=REPLACE_WITH_REGISTERED_RUNNER_ID
+credentialFile=/data/hanw/hw_code/gputrain-test/config/runner.secret
+allowedRoot=/data/hanw/hw_code/gputrain-test
+# Resolve this absolute path on the Linux host before starting the service.
+executableAllowlist=/usr/bin/java
+environmentAllowlist=LANG
+heartbeatIntervalSeconds=10
+pollingTimeoutSeconds=20

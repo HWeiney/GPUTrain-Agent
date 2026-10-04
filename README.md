@@ -2,14 +2,15 @@
 
 面向一台由团队共享的多 GPU 服务器的训练实验管理与智能诊断平台。控制面基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript；训练任务计划由每个 Linux 账户下的原生 Runner 执行，以保留用户文件权限、Conda 环境和 CUDA 工具链。
 
-当前完成阶段一：工程基础、模块边界、可复现依赖、权限控制和训练工作台。Runner、GPU 调度、日志监控、Qwen Agent 与 MCP 尚未实现，不应将它们当作现有能力。
+阶段一工程基础和阶段二 Runner 代码已实现。阶段二的远程 Linux 验收尚待在 `hanw` 用户的目标机执行；GPU 调度、真实训练任务、日志监控、Qwen Agent 与 MCP 仍属于后续阶段。
 
 ## 模块
 
 | 模块 | 当前职责 |
 |---|---|
-| `ruoyi-train-core` | 训练领域入口和受保护的总览接口 |
-| `ruoyi-train-runner-protocol` | 不依赖 Spring 的 Runner 协议对象 |
+| `ruoyi-train-core` | 总览、Runner 注册与认证、命令租约、状态上报和对账 |
+| `ruoyi-train-runner-protocol` | 不依赖 Spring 的 Runner 协议与 HMAC 签名 |
+| `ruoyi-train-runner` | 独立 Java 17 可执行包，安全执行 fixture 并恢复本地进程状态 |
 | `ruoyi-train-monitor` | 监控边界，阶段一仅建立模块 |
 | `ruoyi-train-agent` | Agent 边界，阶段一不接入模型 |
 
@@ -48,6 +49,7 @@ MySQL 首次创建数据目录时按照以下顺序执行初始化脚本：
 1. 若依业务表和基础数据。
 2. Quartz 表。
 3. GPUTrain 菜单与管理员授权。
+4. Runner 表、升级逻辑与管理权限。
 
 所有 SQL 文件显式执行 `SET NAMES utf8mb4`，避免 MySQL 客户端默认字符集导致中文被错误转码。
 
@@ -70,6 +72,20 @@ SPRING_PROFILES_ACTIVE=local DB_PASSWORD=你的本地数据库密码 \
 
 本地日志默认写入 `backend/ruoyi-admin/logs`，可通过 `LOG_PATH` 修改。
 
+Runner 功能还需要在控制面进程环境中提供 `RUNNER_CREDENTIAL_MASTER_KEY`（Base64 编码的 32 字节随机密钥）及 `RUNNER_ENROLLMENT_PEPPER`（独立随机值）。`.env.example` 中仅列出空字段；Compose 的 `.env` 不会自动注入 IDEA 或 Maven 启动的 Java 进程。生产环境必须使用 HTTPS；`local` Profile 的 HTTP 例外仅限回环地址。
+
+## 用户级 Runner
+
+在项目根目录构建：
+
+```bash
+mvn -f backend/pom.xml clean package
+```
+
+可执行 JAR 由 `backend/ruoyi-train-runner/target/ruoyi-train-runner-3.9.2.jar` 生成。Runner 以 `java -jar <jar> <absolute-runner.properties-path>` 启动；配置键和无秘密示例见 `deploy/runner/runner.properties.example`。`credentialFile` 保存注册返回的 Base64URL Runner 密钥，仅由目标 Linux 用户读取，权限必须为 `600`。Runner 不读取 Shell 命令、不通过 SSH 运行训练，工作目录和状态日志受 `allowedRoot` 限制。
+
+`deploy/runner/gputrain-runner.service` 使用 `systemd --user`，路径固定为 `/data/hanw/hw_code/gputrain-test`，并以 `KillMode=process` 保留运行中的 fixture 供重启对账。完整的无秘密打包、人工安装和 Linux 验收命令见 `docs/verification/phase-2-runner.md`；本机打包不能代替目标机验收。
+
 ## 启动前端
 
 ```bash
@@ -91,4 +107,4 @@ git diff --check
 
 管理员可以看到 `GPUTrain / 训练工作台` 并访问 `GET /train/overview`；未授权用户既看不到菜单，直接请求接口也会被拒绝。
 
-完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。
+完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。阶段二本地证据与远程待验项目见 `docs/verification/phase-2-runner.md`。
