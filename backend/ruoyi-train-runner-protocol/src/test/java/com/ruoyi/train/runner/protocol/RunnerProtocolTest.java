@@ -115,7 +115,7 @@ class RunnerProtocolTest
         assertEquals(0, new RunnerCommandReport(RunnerCommandStatus.LEASED, RunnerCommandStatus.RUNNING,
                 null, null, null, null, null, 0).attempt());
         assertThrows(NullPointerException.class,
-            () -> new RunnerProcessSnapshot(commandId, 1, now, "/usr/bin/java", "hash", null, null, null));
+            () -> new RunnerProcessSnapshot(commandId, 1, now, "/usr/bin/java", "hash", null, null, null, 1));
         assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,
             new RunnerProtocolException(RunnerErrorCode.RUNNER_AUTH_INVALID, "invalid").code());
     }

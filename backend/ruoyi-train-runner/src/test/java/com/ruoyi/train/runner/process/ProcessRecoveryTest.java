@@ -73,9 +73,17 @@ class ProcessRecoveryTest
             ManagedProcess saved = new ManagedProcess(UUID.randomUUID(), "fixture", child.pid(),
                     child.info().startInstant().orElseThrow(), root.toString(), executable.toString(),
                     ProcessSupervisor.argumentsSha256(arguments), root.resolve("out").toString(),
-                    root.resolve("err").toString(), RunnerProcessStatus.RUNNING, null);
+                    root.resolve("err").toString(), RunnerProcessStatus.RUNNING, null, 1);
             ProcessStateStore store = new ProcessStateStore(root); store.save(saved);
-            try (var supervisor = new ProcessSupervisor(store, ProcessLookup.system()))
+            ProcessLookup lookup = pid -> ProcessLookup.system().find(pid).map(view ->
+                    new ProcessLookup.View(view.pid(), view.startedAt(), view.executable(), view.arguments(),
+                            view.alive(), () -> {
+                                view.destroy().getAsBoolean();
+                                try { child.waitFor(); }
+                                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                                return true;
+                            }, view.destroyForcibly()));
+            try (var supervisor = new ProcessSupervisor(store, lookup))
             {
                 assertEquals(RunnerProcessStatus.RUNNING, supervisor.recover(store.loadAll().get(0)).status());
                 assertEquals(RunnerProcessStatus.STOPPED, supervisor.stop(saved.commandId()).status());
@@ -85,11 +93,52 @@ class ProcessRecoveryTest
         finally { child.destroyForcibly(); child.waitFor(); }
     }
 
+    @Test void pidReusedAfterGracefulStopIsNeverReportedAsOwnedRunningOrDestroyedForcibly() throws Exception
+    {
+        AtomicInteger graceful = new AtomicInteger();
+        AtomicInteger forced = new AtomicInteger();
+        ProcessLookup lookup = pid -> graceful.get() == 0
+                ? Optional.of(new ProcessLookup.View(pid, STARTED, "/usr/bin/java", ARGS, true,
+                        () -> { graceful.incrementAndGet(); return true; }, () -> { forced.incrementAndGet(); return true; }))
+                : Optional.of(new ProcessLookup.View(pid, STARTED.plusSeconds(30), "/usr/bin/java", ARGS, true,
+                        () -> { throw new AssertionError("must not destroy reused PID"); },
+                        () -> { forced.incrementAndGet(); return true; }));
+        ProcessStateStore store = new ProcessStateStore(root);
+        ManagedProcess saved = saved(RunnerProcessStatus.RUNNING); store.save(saved);
+        try (var supervisor = new ProcessSupervisor(store, lookup))
+        {
+            supervisor.recover(saved);
+            RunnerProcessSnapshot after = supervisor.stop(saved.commandId());
+            assertEquals(RunnerProcessStatus.IDENTITY_MISMATCH, after.status());
+            assertEquals(RunnerErrorCode.PROCESS_IDENTITY_MISMATCH, after.errorCode());
+            assertEquals(1, graceful.get()); assertEquals(0, forced.get());
+            assertEquals(RunnerProcessStatus.RUNNING, store.loadAll().get(0).status());
+        }
+    }
+
+    @Test void currentLeaseCanAdoptSameRecoveredProcessWithoutStartingAnother() throws Exception
+    {
+        ManagedProcess saved = saved(RunnerProcessStatus.RUNNING);
+        ProcessStateStore store = new ProcessStateStore(root); store.save(saved);
+        ProcessLookup lookup = pid -> Optional.of(view(pid, STARTED, "/usr/bin/java", ARGS, true, new AtomicInteger()));
+        ValidatedProcessSpec spec = new ValidatedProcessSpec(root, Path.of("/usr/bin/java"), ARGS,
+                Map.of(), 30, "key", root.resolve("out"), root.resolve("err"));
+        try (var supervisor = new ProcessSupervisor(store, lookup))
+        {
+            supervisor.recover(saved);
+            RunnerProcessSnapshot adopted = supervisor.start(saved.commandId(), 2, spec);
+            assertEquals(1234L, adopted.pid());
+            assertEquals(2, adopted.attempt());
+            assertEquals(2, store.loadAll().get(0).attempt());
+            assertEquals(RunnerProcessStatus.RUNNING, adopted.status());
+        }
+    }
+
     private ManagedProcess saved(RunnerProcessStatus status)
     {
         return new ManagedProcess(UUID.randomUUID(), "key", 1234L, STARTED, root.toString(), "/usr/bin/java",
                 ProcessSupervisor.argumentsSha256(ARGS), root.resolve("out").toString(), root.resolve("err").toString(),
-                status, status == RunnerProcessStatus.SUCCEEDED ? 0 : null);
+                status, status == RunnerProcessStatus.SUCCEEDED ? 0 : null, 1);
     }
 
     private static ProcessLookup.View view(long pid, Instant start, String executable, List<String> args,

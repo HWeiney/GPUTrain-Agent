@@ -37,6 +37,10 @@
         SELECT * FROM train_runner_command WHERE command_uuid = #{commandUuid}
     </select>
 
+    <select id="findByUuidForUpdate" resultMap="CommandResult">
+        SELECT * FROM train_runner_command WHERE command_uuid = #{commandUuid} FOR UPDATE
+    </select>
+
     <select id="findByRunnerAndIdempotencyKey" resultMap="CommandResult">
         SELECT * FROM train_runner_command
         WHERE runner_id = #{runnerId} AND idempotency_key = #{idempotencyKey}
@@ -87,6 +91,6 @@
         UPDATE train_runner_command
         SET status = #{nextStatus}, updated_at = #{now}
         WHERE runner_id = #{runnerId} AND command_id = #{commandId}
-          AND status = #{expectedStatus}
+          AND attempt_count = #{attempt} AND status = #{expectedStatus}
     </update>
 </mapper>

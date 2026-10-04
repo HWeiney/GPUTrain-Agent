@@ -37,13 +37,27 @@ public final class ProcessSupervisor implements AutoCloseable
     });
 
     public synchronized RunnerProcessSnapshot start(UUID commandId, ValidatedProcessSpec spec) throws IOException
+    { return start(commandId, 1, spec); }
+
+    public synchronized RunnerProcessSnapshot start(UUID commandId, int attempt, ValidatedProcessSpec spec) throws IOException
     {
         Objects.requireNonNull(commandId); Objects.requireNonNull(spec);
+        if (attempt <= 0) throw new IllegalArgumentException("Process lease attempt must be positive");
         if (closed) throw new IllegalStateException("Process supervisor is closed");
         Entry existing = processes.get(commandId);
         if (existing != null)
         {
-            if (!sameRequest(existing.spec, spec)) throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Command identity already exists");
+            if (!sameRequest(existing.spec, spec))
+                throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Command identity already exists");
+            if (attempt < existing.attempt)
+                throw new ProcessPolicyException(RunnerErrorCode.COMMAND_LEASE_EXPIRED, "Older process lease attempt");
+            if (attempt > existing.attempt)
+            {
+                RunnerProcessSnapshot current = observe(commandId);
+                if (current.status() == RunnerProcessStatus.RUNNING) matchingLive(managed(commandId, existing));
+                if (stateStore != null) stateStore.save(managed(commandId, existing).withAttempt(attempt));
+                existing.attempt = attempt;
+            }
             return observe(commandId);
         }
         ManagedProcess restored = recovered.get(commandId);
@@ -57,6 +71,16 @@ public final class ProcessSupervisor implements AutoCloseable
             ProcessRecovery recovery = recover(restored);
             if (recovery.errorCode() != null)
                 throw new ProcessPolicyException(recovery.errorCode(), "Process identity changed");
+            if (recovery.status() == RunnerProcessStatus.UNKNOWN)
+                throw new ProcessPolicyException(RunnerErrorCode.COMMAND_STATUS_CONFLICT, "Recovered process is no longer observable");
+            if (attempt < restored.attempt())
+                throw new ProcessPolicyException(RunnerErrorCode.COMMAND_LEASE_EXPIRED, "Older process lease attempt");
+            if (attempt > restored.attempt())
+            {
+                restored = restored.withAttempt(attempt);
+                stateStore.save(restored);
+                recovered.put(commandId, restored);
+            }
             return recoveredSnapshot(restored, recovery);
         }
         if (processes.values().stream().anyMatch(e -> e.spec.idempotencyKey().equals(spec.idempotencyKey())))
@@ -79,7 +103,7 @@ public final class ProcessSupervisor implements AutoCloseable
                 process.destroyForcibly();
                 throw new IOException("Process start identity is unavailable");
             }
-            Entry entry = new Entry(spec, process, actualStart.orElseGet(Instant::now));
+            Entry entry = new Entry(spec, process, actualStart.orElseGet(Instant::now), attempt);
             entry.stdoutPump = pump(process.getInputStream(), logs.stdout);
             entry.stderrPump = pump(process.getErrorStream(), logs.stderr);
             logs.handToPumps();
@@ -166,18 +190,19 @@ public final class ProcessSupervisor implements AutoCloseable
         ProcessLookup.View current = matchingLive(saved);
         current.destroy().getAsBoolean();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (System.nanoTime() < deadline && processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
+        while (System.nanoTime() < deadline && recover(saved).status() == RunnerProcessStatus.RUNNING)
             Thread.sleep(20);
-        Optional<ProcessLookup.View> still = processLookup.find(saved.pid());
-        if (still.isPresent() && still.get().alive())
+        ProcessRecovery afterGrace = recover(saved);
+        if (afterGrace.status() == RunnerProcessStatus.RUNNING)
         {
             matchingLive(saved).destroyForcibly().getAsBoolean();
             deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while (System.nanoTime() < deadline && processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
+            while (System.nanoTime() < deadline && recover(saved).status() == RunnerProcessStatus.RUNNING)
                 Thread.sleep(20);
         }
-        if (processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
-            return recoveredSnapshot(saved, new ProcessRecovery(RunnerProcessStatus.RUNNING, null));
+        ProcessRecovery finalState = recover(saved);
+        if (finalState.status() != RunnerProcessStatus.UNKNOWN)
+            return recoveredSnapshot(saved, finalState);
         ManagedProcess stopped = stateStore.markTerminal(saved.commandId(), RunnerProcessStatus.STOPPED, null);
         recovered.put(saved.commandId(), stopped);
         return recoveredSnapshot(stopped, new ProcessRecovery(RunnerProcessStatus.STOPPED, null));
@@ -205,14 +230,14 @@ public final class ProcessSupervisor implements AutoCloseable
 
     private static RunnerProcessSnapshot recoveredSnapshot(ManagedProcess saved, ProcessRecovery recovery)
     { return new RunnerProcessSnapshot(saved.commandId(), saved.pid(), saved.processStartedAt(), saved.executable(),
-            saved.argumentsSha256(), recovery.status(), saved.exitCode(), recovery.errorCode()); }
+            saved.argumentsSha256(), recovery.status(), saved.exitCode(), recovery.errorCode(), saved.attempt()); }
 
     private static ManagedProcess managed(UUID id, Entry entry)
     { return new ManagedProcess(id, entry.spec.idempotencyKey(), entry.process.pid(), entry.startedAt,
             entry.spec.workingDirectory().toString(), entry.spec.executable().toString(),
             argumentsSha256(entry.spec.arguments()), entry.spec.stdoutPath().toString(),
             entry.spec.stderrPath().toString(), entry.status,
-            entry.process.isAlive() ? null : entry.process.exitValue()); }
+            entry.process.isAlive() ? null : entry.process.exitValue(), entry.attempt); }
 
     private Future<Boolean> pump(InputStream input, OutputStream output)
     {
@@ -241,7 +266,8 @@ public final class ProcessSupervisor implements AutoCloseable
     private RunnerProcessSnapshot snapshot(UUID id, Entry e)
     {
         return new RunnerProcessSnapshot(id, e.process.pid(), e.startedAt, e.spec.executable().toString(),
-            argumentsSha256(e.spec.arguments()), e.status, e.process.isAlive() ? null : e.process.exitValue(), null);
+            argumentsSha256(e.spec.arguments()), e.status, e.process.isAlive() ? null : e.process.exitValue(), null,
+            e.attempt);
     }
     public static String argumentsSha256(List<String> arguments)
     {
@@ -271,12 +297,13 @@ public final class ProcessSupervisor implements AutoCloseable
     }
     private static final class Entry
     {
-        final ValidatedProcessSpec spec; final Process process; final Instant startedAt;
+        final ValidatedProcessSpec spec; final Process process; final Instant startedAt; int attempt;
         RunnerProcessStatus status = RunnerProcessStatus.RUNNING;
         ScheduledFuture<?> timeout;
         Future<Boolean> stdoutPump;
         Future<Boolean> stderrPump;
         boolean stopRequested;
-        Entry(ValidatedProcessSpec spec, Process process, Instant startedAt) { this.spec = spec; this.process = process; this.startedAt = startedAt; }
+        Entry(ValidatedProcessSpec spec, Process process, Instant startedAt, int attempt)
+        { this.spec = spec; this.process = process; this.startedAt = startedAt; this.attempt = attempt; }
     }
 }

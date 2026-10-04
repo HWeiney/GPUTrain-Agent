@@ -8,7 +8,7 @@ import com.ruoyi.train.runner.protocol.RunnerProcessStatus;
 /** Durable identity and last observed state of a locally started process. */
 public record ManagedProcess(UUID commandId, String idempotencyKey, long pid, Instant processStartedAt,
         String workingDirectory, String executable, String argumentsSha256, String stdoutPath, String stderrPath,
-        RunnerProcessStatus status, Integer exitCode)
+        RunnerProcessStatus status, Integer exitCode, int attempt)
 {
     public ManagedProcess
     {
@@ -17,9 +17,14 @@ public record ManagedProcess(UUID commandId, String idempotencyKey, long pid, In
         Objects.requireNonNull(executable); Objects.requireNonNull(argumentsSha256);
         Objects.requireNonNull(stdoutPath); Objects.requireNonNull(stderrPath); Objects.requireNonNull(status);
         if (pid <= 0) throw new IllegalArgumentException("PID must be positive");
+        if (attempt <= 0) throw new IllegalArgumentException("Process lease attempt must be positive");
     }
 
     public ManagedProcess withStatus(RunnerProcessStatus next, Integer code)
     { return new ManagedProcess(commandId, idempotencyKey, pid, processStartedAt, workingDirectory,
-            executable, argumentsSha256, stdoutPath, stderrPath, next, code); }
+            executable, argumentsSha256, stdoutPath, stderrPath, next, code, attempt); }
+
+    public ManagedProcess withAttempt(int nextAttempt)
+    { return new ManagedProcess(commandId, idempotencyKey, pid, processStartedAt, workingDirectory,
+            executable, argumentsSha256, stdoutPath, stderrPath, status, exitCode, nextAttempt); }
 }

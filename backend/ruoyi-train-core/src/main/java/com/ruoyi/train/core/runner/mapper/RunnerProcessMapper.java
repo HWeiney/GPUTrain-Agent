@@ -10,7 +10,8 @@ public interface RunnerProcessMapper
 
     RunnerProcessRecord findByCommandId(@Param("commandId") Long commandId);
 
-    int updateSnapshot(@Param("commandId") Long commandId,
+    int updateSnapshot(@Param("commandId") Long commandId, @Param("runnerId") Long runnerId,
+            @Param("expectedStatus") String expectedStatus,
             @Param("status") String status, @Param("exitCode") Integer exitCode,
             @Param("errorCode") String errorCode,
             @Param("lastSeenAt") Instant lastSeenAt);

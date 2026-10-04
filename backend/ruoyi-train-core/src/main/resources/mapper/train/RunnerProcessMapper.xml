@@ -37,6 +37,7 @@
         UPDATE train_runner_process
         SET status = #{status}, exit_code = #{exitCode}, error_code = #{errorCode},
             last_seen_at = #{lastSeenAt}, updated_at = #{lastSeenAt}
-        WHERE command_id = #{commandId}
+        WHERE command_id = #{commandId} AND runner_id = #{runnerId}
+          AND status = #{expectedStatus}
     </update>
 </mapper>

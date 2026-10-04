@@ -19,6 +19,8 @@ public final class RunnerApplication implements AutoCloseable
     private final ProcessStateStore stateStore;
     private final ProcessSupervisor supervisor;
     private final Map<UUID, RunnerCommandLease> active = new LinkedHashMap<>();
+    private final Set<UUID> recoveredIds = new LinkedHashSet<>();
+    private final Map<UUID, RunnerProcessSnapshot> reconciled = new HashMap<>();
     private final Deque<PendingReport> pending = new ArrayDeque<>();
     private final Set<UUID> reconciliationRequired = new HashSet<>();
     private final ScheduledExecutorService heartbeats = Executors.newSingleThreadScheduledExecutor();
@@ -55,16 +57,21 @@ public final class RunnerApplication implements AutoCloseable
     public void run() throws IOException, InterruptedException
     {
         byte[] secret = config.readSecret(); Arrays.fill(secret, (byte) 0);
-        List<RunnerProcessSnapshot> snapshots = new ArrayList<>();
         for (ManagedProcess saved : stateStore.loadAll())
         {
-            ProcessRecovery recovery = supervisor.recover(saved);
-            snapshots.add(new RunnerProcessSnapshot(saved.commandId(), saved.pid(), saved.processStartedAt(),
-                    saved.executable(), saved.argumentsSha256(), recovery.status(), saved.exitCode(), recovery.errorCode()));
+            supervisor.recover(saved);
+            recoveredIds.add(saved.commandId());
         }
         while (!closed && !Thread.currentThread().isInterrupted())
         {
-            try { client.reconcile(snapshots); controlBackoff.reset(); break; }
+            try
+            {
+                List<RunnerProcessSnapshot> snapshots = currentRecoveredSnapshots();
+                client.reconcile(snapshots);
+                for (RunnerProcessSnapshot snapshot : snapshots) reconciled.put(snapshot.commandId(), snapshot);
+                controlBackoff.reset();
+                break;
+            }
             catch (RunnerProtocolException failure)
             {
                 if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) throw failure;
@@ -111,6 +118,7 @@ public final class RunnerApplication implements AutoCloseable
 
     private void tickOnce() throws IOException, InterruptedException
     {
+        reconcileRecoveredChanges();
         flushReports();
         for (var iterator = active.entrySet().iterator(); iterator.hasNext(); )
         {
@@ -129,7 +137,25 @@ public final class RunnerApplication implements AutoCloseable
             requireCommunicationAllowed();
             if (next.isPresent()) execute(next.get());
         }
+        reconcileRecoveredChanges();
         flushReports();
+    }
+
+    private List<RunnerProcessSnapshot> currentRecoveredSnapshots()
+    {
+        List<RunnerProcessSnapshot> snapshots = new ArrayList<>();
+        for (UUID id : recoveredIds) snapshots.add(supervisor.observe(id));
+        return snapshots;
+    }
+
+    private void reconcileRecoveredChanges() throws IOException, InterruptedException
+    {
+        List<RunnerProcessSnapshot> changed = currentRecoveredSnapshots().stream()
+                .filter(snapshot -> !snapshot.equals(reconciled.get(snapshot.commandId()))).toList();
+        if (changed.isEmpty()) return;
+        requireCommunicationAllowed();
+        client.reconcile(changed);
+        for (RunnerProcessSnapshot snapshot : changed) reconciled.put(snapshot.commandId(), snapshot);
     }
 
     private void execute(RunnerCommandLease lease) throws InterruptedException
@@ -139,7 +165,8 @@ public final class RunnerApplication implements AutoCloseable
         {
             if (lease.type() == RunnerCommandType.START_PROCESS)
             {
-                RunnerProcessSnapshot snapshot = supervisor.start(lease.commandId(), policy.validate(lease.process()));
+                RunnerProcessSnapshot snapshot = supervisor.start(lease.commandId(), lease.attempt(),
+                        policy.validate(lease.process()));
                 queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.RUNNING, snapshot, null);
                 active.put(lease.commandId(), lease);
             }
@@ -152,7 +179,16 @@ public final class RunnerApplication implements AutoCloseable
             }
         }
         catch (ProcessPolicyException failure)
-        { queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.REJECTED, null, failure.code()); }
+        {
+            if (failure.code() == RunnerErrorCode.COMMAND_LEASE_EXPIRED
+                    || failure.code() == RunnerErrorCode.PROCESS_IDENTITY_MISMATCH
+                    || failure.code() == RunnerErrorCode.COMMAND_STATUS_CONFLICT)
+            {
+                reconciliationRequired.add(lease.commandId());
+                return;
+            }
+            queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.REJECTED, null, failure.code());
+        }
         catch (IOException | IllegalArgumentException failure)
         { queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.REJECTED, null, null); }
     }

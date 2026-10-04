@@ -171,6 +171,8 @@ class RunnerCommandServiceTest
         @Override public RunnerCommandRecord findById(Long id) { return rows.get(id); }
         @Override public RunnerCommandRecord findByUuid(String uuid)
         { return rows.values().stream().filter(c -> c.commandUuid().equals(uuid)).findFirst().orElse(null); }
+        @Override public RunnerCommandRecord findByUuidForUpdate(String uuid)
+        { return findByUuid(uuid); }
         @Override public RunnerCommandRecord findByRunnerAndIdempotencyKey(Long runner, String key)
         { return rows.values().stream().filter(c -> c.runnerId().equals(runner)
                 && (caseInsensitiveLookup ? c.idempotencyKey().equalsIgnoreCase(key)
@@ -193,8 +195,9 @@ class RunnerCommandServiceTest
         @Override public int markRejected(Long runner, Long id, int attempt, Instant now,
                 String result, String errorCode, Instant until)
         { return leaseMatches(runner, id, attempt, now, until) ? change(id, "LEASED", "REJECTED", null) : 0; }
-        @Override public int advanceReconciled(Long runner, Long id, String previous, String next, Instant now)
+        @Override public int advanceReconciled(Long runner, Long id, int attempt, String previous, String next, Instant now)
         { return rows.containsKey(id) && rows.get(id).runnerId().equals(runner)
+                && rows.get(id).attemptCount() == attempt
                 ? change(id, previous, next, null) : 0; }
         private boolean leaseMatches(Long runner, Long id, int attempt, Instant now, Instant until)
         { RunnerCommandRecord current = rows.get(id); return current != null && until.equals(current.leaseUntil())

@@ -18,7 +18,7 @@ class ProcessStateStoreTest
         UUID id = UUID.randomUUID();
         ManagedProcess running = new ManagedProcess(id, "key", 1234L, Instant.parse("2026-01-01T00:00:00Z"),
                 root.toString(), "/usr/bin/java", "digest", root.resolve("out").toString(),
-                root.resolve("err").toString(), RunnerProcessStatus.RUNNING, null);
+                root.resolve("err").toString(), RunnerProcessStatus.RUNNING, null, 1);
         store.save(running);
         assertEquals(List.of(running), store.loadAll());
         store.markTerminal(id, RunnerProcessStatus.SUCCEEDED, 0);
@@ -34,5 +34,17 @@ class ProcessStateStoreTest
         Files.createDirectory(root.resolve(".gputrain"));
         Files.createSymbolicLink(root.resolve(".gputrain/state"), outside);
         assertThrows(java.io.IOException.class, () -> new ProcessStateStore(root));
+    }
+
+    @Test void legacyStateWithoutAttemptFailsClosed() throws Exception
+    {
+        var store = new ProcessStateStore(root);
+        UUID id = UUID.randomUUID();
+        Files.writeString(root.resolve(".gputrain/state/" + id + ".json"),
+                "{\"commandId\":\"" + id + "\",\"idempotencyKey\":\"legacy\",\"pid\":1234," +
+                "\"processStartedAt\":\"2026-01-01T00:00:00Z\",\"workingDirectory\":\"/tmp\"," +
+                "\"executable\":\"/usr/bin/java\",\"argumentsSha256\":\"digest\"," +
+                "\"stdoutPath\":\"/tmp/out\",\"stderrPath\":\"/tmp/err\",\"status\":\"RUNNING\"}");
+        assertThrows(java.io.IOException.class, store::loadAll);
     }
 }

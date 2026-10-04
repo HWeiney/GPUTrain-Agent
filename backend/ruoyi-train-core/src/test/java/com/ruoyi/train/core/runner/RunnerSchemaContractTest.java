@@ -128,6 +128,19 @@ class RunnerSchemaContractTest
     }
 
     @Test
+    void reconciliationSqlFencesAttemptAndProcessStatus() throws IOException
+    {
+        String command = mapperXml("RunnerCommandMapper");
+        String process = mapperXml("RunnerProcessMapper");
+        assertAll(
+            () -> assertTrue(command.contains("id=\"findByUuidForUpdate\"")),
+            () -> assertTrue(command.contains("id=\"advanceReconciled\"")),
+            () -> assertTrue(command.contains("attempt_count = #{attempt}")),
+            () -> assertTrue(process.contains("status = #{expectedStatus}")),
+            () -> assertTrue(process.contains("runner_id = #{runnerId}")));
+    }
+
+    @Test
     void myBatisLoadsEveryMapperStatement() throws IOException
     {
         Configuration configuration = new Configuration();

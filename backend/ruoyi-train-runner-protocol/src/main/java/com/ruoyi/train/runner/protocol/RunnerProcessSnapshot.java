@@ -6,7 +6,7 @@ import java.util.UUID;
 
 public record RunnerProcessSnapshot(UUID commandId, long pid, Instant processStartedAt,
         String executable, String argumentsSha256, RunnerProcessStatus status,
-        Integer exitCode, RunnerErrorCode errorCode)
+        Integer exitCode, RunnerErrorCode errorCode, int attempt)
 {
     public RunnerProcessSnapshot
     {
@@ -15,5 +15,6 @@ public record RunnerProcessSnapshot(UUID commandId, long pid, Instant processSta
         Objects.requireNonNull(executable, "executable");
         Objects.requireNonNull(argumentsSha256, "argumentsSha256");
         Objects.requireNonNull(status, "status");
+        if (attempt <= 0) throw new IllegalArgumentException("Process lease attempt must be positive");
     }
 }

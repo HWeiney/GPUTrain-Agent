@@ -13,6 +13,8 @@ public interface RunnerCommandMapper
 
     RunnerCommandRecord findByUuid(@Param("commandUuid") String commandUuid);
 
+    RunnerCommandRecord findByUuidForUpdate(@Param("commandUuid") String commandUuid);
+
     RunnerCommandRecord findByRunnerAndIdempotencyKey(@Param("runnerId") Long runnerId,
             @Param("idempotencyKey") String idempotencyKey);
 
@@ -49,6 +51,7 @@ public interface RunnerCommandMapper
             @Param("leaseUntil") Instant leaseUntil);
 
     int advanceReconciled(@Param("runnerId") Long runnerId, @Param("commandId") Long commandId,
+            @Param("attempt") int attempt,
             @Param("expectedStatus") String expectedStatus, @Param("nextStatus") String nextStatus,
             @Param("now") Instant now);
 }

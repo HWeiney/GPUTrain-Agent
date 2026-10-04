@@ -16,17 +16,139 @@ import org.junit.jupiter.api.io.TempDir;
 import com.ruoyi.train.runner.config.RunnerConfig;
 import com.ruoyi.train.runner.process.ManagedProcess;
 import com.ruoyi.train.runner.process.ProcessStateStore;
+import com.ruoyi.train.runner.process.ProcessSupervisor;
 import com.ruoyi.train.runner.protocol.*;
 
 class RunnerApplicationTest
 {
     @TempDir Path root;
+    @Test void refreshesRecoverySnapshotOnRetryAfterChildExits() throws Exception
+    {
+        Process child = sleepingChild();
+        UUID id = saveChild(child);
+        List<RunnerProcessSnapshot> sent = new CopyOnWriteArrayList<>();
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
+            RunnerProcessSnapshot[] batch = json.readValue(exchange.getRequestBody(), RunnerProcessSnapshot[].class);
+            sent.add(batch[0]);
+            if (sent.size() == 1)
+            {
+                child.destroyForcibly();
+                try { child.waitFor(); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                exchange.sendResponseHeaders(503, -1);
+            }
+            else exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.createContext("/runner-api/v1/heartbeat", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> reject(exchange, "RUNNER_AUTH_INVALID"));
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
+            assertEquals(id, sent.get(0).commandId());
+            assertEquals(RunnerProcessStatus.RUNNING, sent.get(0).status());
+            assertEquals(RunnerProcessStatus.UNKNOWN, sent.get(1).status());
+        }
+        finally { child.destroyForcibly(); child.waitFor(); server.stop(0); }
+    }
+
+    @Test void recoveredStopPersistsAndReconcilesTerminalStatus() throws Exception
+    {
+        Process child = sleepingChild();
+        UUID target = saveChild(child);
+        UUID stopId = UUID.randomUUID();
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        var lease = new RunnerCommandLease(stopId, RunnerCommandType.STOP_PROCESS, null, target,
+                Instant.now().plusSeconds(30), 1);
+        List<RunnerProcessSnapshot> sent = new CopyOnWriteArrayList<>();
+        AtomicInteger polls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
+            RunnerProcessSnapshot[] batch = json.readValue(exchange.getRequestBody(), RunnerProcessSnapshot[].class);
+            sent.add(batch[0]); exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.createContext("/runner-api/v1/heartbeat", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            if (polls.getAndIncrement() == 0)
+            {
+                byte[] body = json.writeValueAsBytes(lease);
+                exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+            }
+            else reject(exchange, "RUNNER_AUTH_INVALID");
+        });
+        server.createContext("/runner-api/v1/commands/" + stopId + "/reports", exchange -> {
+            exchange.getRequestBody().readAllBytes(); exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
+            assertEquals(RunnerProcessStatus.RUNNING, sent.get(0).status());
+            assertTrue(sent.stream().anyMatch(s -> s.status() == RunnerProcessStatus.STOPPED));
+            assertEquals(RunnerProcessStatus.STOPPED, new ProcessStateStore(root).loadAll().get(0).status());
+            assertFalse(child.isAlive());
+        }
+        finally { child.destroyForcibly(); child.waitFor(); server.stop(0); }
+    }
+
+    @Test void observesRecoveredChildExitAfterStartupAndReconcilesUnknown() throws Exception
+    {
+        Process child = sleepingChild();
+        saveChild(child);
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        List<RunnerProcessSnapshot> sent = new CopyOnWriteArrayList<>();
+        AtomicInteger polls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
+            sent.add(json.readValue(exchange.getRequestBody(), RunnerProcessSnapshot[].class)[0]);
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.createContext("/runner-api/v1/heartbeat", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            if (polls.getAndIncrement() == 0)
+            {
+                child.destroyForcibly();
+                try { child.waitFor(); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                exchange.sendResponseHeaders(204, -1); exchange.close();
+            }
+            else reject(exchange, "RUNNER_AUTH_INVALID");
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
+            assertEquals(RunnerProcessStatus.RUNNING, sent.get(0).status());
+            assertTrue(sent.stream().anyMatch(s -> s.status() == RunnerProcessStatus.UNKNOWN));
+        }
+        finally { child.destroyForcibly(); child.waitFor(); server.stop(0); }
+    }
+
+    private Process sleepingChild() throws Exception
+    {
+        List<String> command = new ArrayList<>(); command.add(ProcessSupervisorTest.java());
+        command.addAll(ProcessSupervisorTest.args("--mode", "sleep", "--seconds", "30"));
+        return new ProcessBuilder(command).directory(root.toFile()).start();
+    }
+
+    private UUID saveChild(Process child) throws Exception
+    {
+        UUID id = UUID.randomUUID();
+        new ProcessStateStore(root).save(new ManagedProcess(id, "saved", child.pid(),
+                child.info().startInstant().orElseThrow(), root.toString(), Path.of(ProcessSupervisorTest.java()).toRealPath().toString(),
+                ProcessSupervisor.argumentsSha256(ProcessSupervisorTest.args("--mode", "sleep", "--seconds", "30")),
+                root.resolve("out").toString(), root.resolve("err").toString(), RunnerProcessStatus.RUNNING, null, 1));
+        return id;
+    }
     @Test void loadsSavedStateAndReconcilesBeforeHeartbeatOrPoll() throws Exception
     {
         UUID id = UUID.randomUUID();
         new ProcessStateStore(root).save(new ManagedProcess(id, "saved", 1234L, Instant.now(), root.toString(),
                 ProcessSupervisorTest.java(), "digest", root.resolve("out").toString(), root.resolve("err").toString(),
-                RunnerProcessStatus.SUCCEEDED, 0));
+                RunnerProcessStatus.SUCCEEDED, 0, 1));
         List<String> events = new CopyOnWriteArrayList<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
@@ -183,6 +305,7 @@ class RunnerApplicationTest
                 assertEquals(RunnerCommandStatus.LEASED, reports.get(0).previousStatus());
                 assertEquals(RunnerCommandStatus.RUNNING, reports.get(0).status());
                 assertTrue(reports.stream().allMatch(r -> r.attempt() == 3));
+                assertEquals(3, new ProcessStateStore(root).loadAll().get(0).attempt());
             }
         }
         finally { server.stop(0); }
