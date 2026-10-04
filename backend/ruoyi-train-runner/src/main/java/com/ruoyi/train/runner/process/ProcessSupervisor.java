@@ -1,6 +1,7 @@
 package com.ruoyi.train.runner.process;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -12,14 +13,21 @@ import java.util.*;
 import java.util.concurrent.*;
 import com.ruoyi.train.runner.protocol.*;
 
-/** Owns directly spawned Process objects. Durable identity recovery is added separately. */
+/** Starts constrained processes and validates durable identity before recovered operations. */
 public final class ProcessSupervisor implements AutoCloseable
 {
     @FunctionalInterface interface ProcessLauncher { Process start(ProcessBuilder builder) throws IOException; }
     private final ProcessLauncher launcher;
-    public ProcessSupervisor() { this(ProcessBuilder::start); }
-    ProcessSupervisor(ProcessLauncher launcher) { this.launcher = Objects.requireNonNull(launcher); }
+    private final ProcessStateStore stateStore;
+    private final ProcessLookup processLookup;
+    public ProcessSupervisor() { this(ProcessBuilder::start, null, ProcessLookup.system()); }
+    public ProcessSupervisor(ProcessStateStore stateStore, ProcessLookup processLookup)
+    { this(ProcessBuilder::start, Objects.requireNonNull(stateStore), Objects.requireNonNull(processLookup)); }
+    ProcessSupervisor(ProcessLauncher launcher) { this(launcher, null, ProcessLookup.system()); }
+    private ProcessSupervisor(ProcessLauncher launcher, ProcessStateStore stateStore, ProcessLookup processLookup)
+    { this.launcher = Objects.requireNonNull(launcher); this.stateStore = stateStore; this.processLookup = processLookup; }
     private final Map<UUID, Entry> processes = new HashMap<>();
+    private final Map<UUID, ManagedProcess> recovered = new HashMap<>();
     private final ExecutorService logPumps = Executors.newCachedThreadPool(r -> {
         Thread thread = new Thread(r, "runner-log-pump"); thread.setDaemon(true); return thread;
     });
@@ -38,7 +46,22 @@ public final class ProcessSupervisor implements AutoCloseable
             if (!sameRequest(existing.spec, spec)) throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Command identity already exists");
             return observe(commandId);
         }
+        ManagedProcess restored = recovered.get(commandId);
+        if (restored != null)
+        {
+            if (!restored.idempotencyKey().equals(spec.idempotencyKey())
+                    || !restored.workingDirectory().equals(spec.workingDirectory().toString())
+                    || !restored.executable().equals(spec.executable().toString())
+                    || !restored.argumentsSha256().equals(argumentsSha256(spec.arguments())))
+                throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Command identity already exists");
+            ProcessRecovery recovery = recover(restored);
+            if (recovery.errorCode() != null)
+                throw new ProcessPolicyException(recovery.errorCode(), "Process identity changed");
+            return recoveredSnapshot(restored, recovery);
+        }
         if (processes.values().stream().anyMatch(e -> e.spec.idempotencyKey().equals(spec.idempotencyKey())))
+            throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Idempotency key already exists");
+        if (recovered.values().stream().anyMatch(e -> e.idempotencyKey().equals(spec.idempotencyKey())))
             throw new ProcessPolicyException(RunnerErrorCode.PROCESS_ALREADY_STARTED, "Idempotency key already exists");
         // Recheck canonical paths immediately before creating files and starting the process.
         if (!spec.workingDirectory().equals(spec.workingDirectory().toRealPath()) || !spec.executable().equals(spec.executable().toRealPath()))
@@ -50,13 +73,31 @@ public final class ProcessSupervisor implements AutoCloseable
         try (ProcessLogs logs = new ProcessLogs(spec.stdoutPath(), spec.stderrPath()))
         {
             Process process = launcher.start(builder);
-            Entry entry = new Entry(spec, process, process.info().startInstant().orElseGet(Instant::now));
+            Optional<Instant> actualStart = process.info().startInstant();
+            if (stateStore != null && actualStart.isEmpty())
+            {
+                process.destroyForcibly();
+                throw new IOException("Process start identity is unavailable");
+            }
+            Entry entry = new Entry(spec, process, actualStart.orElseGet(Instant::now));
             entry.stdoutPump = pump(process.getInputStream(), logs.stdout);
             entry.stderrPump = pump(process.getErrorStream(), logs.stderr);
             logs.handToPumps();
             processes.put(commandId, entry);
+            if (stateStore != null)
+            {
+                try { stateStore.save(managed(commandId, entry)); }
+                catch (IOException failure)
+                {
+                    processes.remove(commandId);
+                    process.destroyForcibly();
+                    throw failure;
+                }
+            }
             entry.timeout = timer.schedule(() -> {
-                try { stop(commandId); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                try { stop(commandId); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                catch (IOException failure) { throw new UncheckedIOException(failure); }
             }, spec.timeoutSeconds(), TimeUnit.SECONDS);
             return snapshot(commandId, entry);
         }
@@ -64,6 +105,8 @@ public final class ProcessSupervisor implements AutoCloseable
 
     public synchronized RunnerProcessSnapshot observe(UUID commandId)
     {
+        ManagedProcess restored = recovered.get(commandId);
+        if (restored != null) return recoveredSnapshot(restored, recover(restored));
         Entry entry = require(commandId);
         if (!entry.process.isAlive() && entry.stdoutPump.isDone() && entry.stderrPump.isDone()
                 && entry.status == RunnerProcessStatus.RUNNING)
@@ -72,26 +115,104 @@ public final class ProcessSupervisor implements AutoCloseable
                 : entry.process.exitValue() == 0 && pumped(entry.stdoutPump) && pumped(entry.stderrPump)
                     ? RunnerProcessStatus.SUCCEEDED : RunnerProcessStatus.FAILED;
             entry.timeout.cancel(false);
+            if (stateStore != null)
+            {
+                try { stateStore.markTerminal(commandId, entry.status, entry.process.exitValue()); }
+                catch (IOException failure) { throw new UncheckedIOException(failure); }
+            }
         }
         return snapshot(commandId, entry);
     }
 
-    public synchronized RunnerProcessSnapshot stop(UUID commandId) throws InterruptedException
+    public synchronized RunnerProcessSnapshot stop(UUID commandId) throws InterruptedException, IOException
     {
+        ManagedProcess restored = recovered.get(commandId);
+        if (restored != null) return stopRecovered(restored);
         RunnerProcessSnapshot current = observe(commandId);
         if (current.status() != RunnerProcessStatus.RUNNING) return current;
         Entry entry = require(commandId);
+        ManagedProcess identity = managed(commandId, entry);
+        ProcessLookup.View view = matchingLive(identity);
         entry.stopRequested = true;
-        entry.process.destroy();
+        view.destroy().getAsBoolean();
         if (!entry.process.waitFor(2, TimeUnit.SECONDS))
         {
-            entry.process.destroyForcibly();
+            matchingLive(identity).destroyForcibly().getAsBoolean();
             if (!entry.process.waitFor(2, TimeUnit.SECONDS)) return snapshot(commandId, entry);
         }
         entry.timeout.cancel(false);
         awaitPump(entry.stdoutPump); awaitPump(entry.stderrPump);
         return observe(commandId);
     }
+
+    public synchronized ProcessRecovery recover(ManagedProcess saved)
+    {
+        Objects.requireNonNull(saved);
+        recovered.put(saved.commandId(), saved);
+        if (terminal(saved.status())) return new ProcessRecovery(saved.status(), null);
+        Optional<ProcessLookup.View> current = processLookup.find(saved.pid());
+        if (current.isEmpty() || !current.get().alive())
+            return new ProcessRecovery(RunnerProcessStatus.UNKNOWN, null);
+        if (!sameIdentity(saved, current.get()))
+            return new ProcessRecovery(RunnerProcessStatus.IDENTITY_MISMATCH, RunnerErrorCode.PROCESS_IDENTITY_MISMATCH);
+        return new ProcessRecovery(RunnerProcessStatus.RUNNING, null);
+    }
+
+    private RunnerProcessSnapshot stopRecovered(ManagedProcess saved) throws IOException, InterruptedException
+    {
+        ProcessRecovery state = recover(saved);
+        if (terminal(state.status()) || state.status() == RunnerProcessStatus.UNKNOWN)
+            return recoveredSnapshot(saved, state);
+        ProcessLookup.View current = matchingLive(saved);
+        current.destroy().getAsBoolean();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline && processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
+            Thread.sleep(20);
+        Optional<ProcessLookup.View> still = processLookup.find(saved.pid());
+        if (still.isPresent() && still.get().alive())
+        {
+            matchingLive(saved).destroyForcibly().getAsBoolean();
+            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadline && processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
+                Thread.sleep(20);
+        }
+        if (processLookup.find(saved.pid()).map(ProcessLookup.View::alive).orElse(false))
+            return recoveredSnapshot(saved, new ProcessRecovery(RunnerProcessStatus.RUNNING, null));
+        ManagedProcess stopped = stateStore.markTerminal(saved.commandId(), RunnerProcessStatus.STOPPED, null);
+        recovered.put(saved.commandId(), stopped);
+        return recoveredSnapshot(stopped, new ProcessRecovery(RunnerProcessStatus.STOPPED, null));
+    }
+
+    private ProcessLookup.View matchingLive(ManagedProcess saved)
+    {
+        ProcessLookup.View view = processLookup.find(saved.pid()).orElse(null);
+        if (view == null || !view.alive() || !sameIdentity(saved, view))
+            throw new ProcessPolicyException(RunnerErrorCode.PROCESS_IDENTITY_MISMATCH, "Process identity changed");
+        return view;
+    }
+
+    private static boolean sameIdentity(ManagedProcess saved, ProcessLookup.View view)
+    {
+        return saved.pid() == view.pid() && saved.processStartedAt().equals(view.startedAt())
+                && view.executable() != null
+                && Path.of(saved.executable()).toAbsolutePath().normalize()
+                        .equals(Path.of(view.executable()).toAbsolutePath().normalize())
+                && view.arguments() != null && saved.argumentsSha256().equals(argumentsSha256(view.arguments()));
+    }
+
+    private static boolean terminal(RunnerProcessStatus status)
+    { return status == RunnerProcessStatus.SUCCEEDED || status == RunnerProcessStatus.FAILED || status == RunnerProcessStatus.STOPPED; }
+
+    private static RunnerProcessSnapshot recoveredSnapshot(ManagedProcess saved, ProcessRecovery recovery)
+    { return new RunnerProcessSnapshot(saved.commandId(), saved.pid(), saved.processStartedAt(), saved.executable(),
+            saved.argumentsSha256(), recovery.status(), saved.exitCode(), recovery.errorCode()); }
+
+    private static ManagedProcess managed(UUID id, Entry entry)
+    { return new ManagedProcess(id, entry.spec.idempotencyKey(), entry.process.pid(), entry.startedAt,
+            entry.spec.workingDirectory().toString(), entry.spec.executable().toString(),
+            argumentsSha256(entry.spec.arguments()), entry.spec.stdoutPath().toString(),
+            entry.spec.stderrPath().toString(), entry.status,
+            entry.process.isAlive() ? null : entry.process.exitValue()); }
 
     private Future<Boolean> pump(InputStream input, OutputStream output)
     {

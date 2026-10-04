@@ -82,4 +82,11 @@
           AND attempt_count = #{attempt} AND status = 'LEASED'
           AND lease_until = #{leaseUntil} AND lease_until &gt;= #{now}
     </update>
+
+    <update id="advanceReconciled">
+        UPDATE train_runner_command
+        SET status = #{nextStatus}, updated_at = #{now}
+        WHERE runner_id = #{runnerId} AND command_id = #{commandId}
+          AND status = #{expectedStatus}
+    </update>
 </mapper>

@@ -193,6 +193,9 @@ class RunnerCommandServiceTest
         @Override public int markRejected(Long runner, Long id, int attempt, Instant now,
                 String result, String errorCode, Instant until)
         { return leaseMatches(runner, id, attempt, now, until) ? change(id, "LEASED", "REJECTED", null) : 0; }
+        @Override public int advanceReconciled(Long runner, Long id, String previous, String next, Instant now)
+        { return rows.containsKey(id) && rows.get(id).runnerId().equals(runner)
+                ? change(id, previous, next, null) : 0; }
         private boolean leaseMatches(Long runner, Long id, int attempt, Instant now, Instant until)
         { RunnerCommandRecord current = rows.get(id); return current != null && until.equals(current.leaseUntil())
                 && !until.isBefore(now) && belongsToAttempt(runner, id, attempt); }

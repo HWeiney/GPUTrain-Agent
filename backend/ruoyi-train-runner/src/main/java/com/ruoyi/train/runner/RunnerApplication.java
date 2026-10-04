@@ -16,7 +16,8 @@ public final class RunnerApplication implements AutoCloseable
     private final RunnerConfig config;
     private final RunnerControlClient client;
     private final ProcessPolicy policy;
-    private final ProcessSupervisor supervisor = new ProcessSupervisor();
+    private final ProcessStateStore stateStore;
+    private final ProcessSupervisor supervisor;
     private final Map<UUID, RunnerCommandLease> active = new LinkedHashMap<>();
     private final Deque<PendingReport> pending = new ArrayDeque<>();
     private final Set<UUID> reconciliationRequired = new HashSet<>();
@@ -28,11 +29,13 @@ public final class RunnerApplication implements AutoCloseable
     private volatile RuntimeException terminalFailure;
     private volatile IOException terminalTransportFailure;
 
-    public RunnerApplication(RunnerConfig config)
+    public RunnerApplication(RunnerConfig config) throws IOException
     {
         this.config = Objects.requireNonNull(config);
         client = new RunnerControlClient(config);
         policy = new ProcessPolicy(config);
+        stateStore = new ProcessStateStore(config.allowedRoot());
+        supervisor = new ProcessSupervisor(stateStore, ProcessLookup.system());
     }
 
     public static void main(String[] args) throws Exception
@@ -52,6 +55,27 @@ public final class RunnerApplication implements AutoCloseable
     public void run() throws IOException, InterruptedException
     {
         byte[] secret = config.readSecret(); Arrays.fill(secret, (byte) 0);
+        List<RunnerProcessSnapshot> snapshots = new ArrayList<>();
+        for (ManagedProcess saved : stateStore.loadAll())
+        {
+            ProcessRecovery recovery = supervisor.recover(saved);
+            snapshots.add(new RunnerProcessSnapshot(saved.commandId(), saved.pid(), saved.processStartedAt(),
+                    saved.executable(), saved.argumentsSha256(), recovery.status(), saved.exitCode(), recovery.errorCode()));
+        }
+        while (!closed && !Thread.currentThread().isInterrupted())
+        {
+            try { client.reconcile(snapshots); controlBackoff.reset(); break; }
+            catch (RunnerProtocolException failure)
+            {
+                if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) throw failure;
+                Thread.sleep(controlBackoff.nextDelayMillis());
+            }
+            catch (IOException failure)
+            {
+                if (!retryable(failure)) throw failure;
+                Thread.sleep(controlBackoff.nextDelayMillis());
+            }
+        }
         scheduleHeartbeat(0);
         while (!closed && !Thread.currentThread().isInterrupted())
         {

@@ -60,7 +60,7 @@ class RunnerControllerSecurityTest
     @Test
     void commandRunnerEndpointsRequireSignedIdentity()
     {
-        for (String name : new String[] { "poll", "report" })
+        for (String name : new String[] { "poll", "report", "reconcile" })
         {
             Method method = method(RunnerApiController.class, name);
             assertNotNull(method.getAnnotation(Anonymous.class));
@@ -69,6 +69,7 @@ class RunnerControllerSecurityTest
         }
         assertTrue(RunnerAuthenticationInterceptor.isSignedPath("/runner-api/v1/commands/poll"));
         assertTrue(RunnerAuthenticationInterceptor.isSignedPath("/runner-api/v1/commands/id/reports"));
+        assertTrue(RunnerAuthenticationInterceptor.isSignedPath("/runner-api/v1/processes/reconcile"));
     }
 
     @Test

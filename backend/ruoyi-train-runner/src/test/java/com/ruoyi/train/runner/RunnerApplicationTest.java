@@ -14,11 +14,43 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.ruoyi.train.runner.config.RunnerConfig;
+import com.ruoyi.train.runner.process.ManagedProcess;
+import com.ruoyi.train.runner.process.ProcessStateStore;
 import com.ruoyi.train.runner.protocol.*;
 
 class RunnerApplicationTest
 {
     @TempDir Path root;
+    @Test void loadsSavedStateAndReconcilesBeforeHeartbeatOrPoll() throws Exception
+    {
+        UUID id = UUID.randomUUID();
+        new ProcessStateStore(root).save(new ManagedProcess(id, "saved", 1234L, Instant.now(), root.toString(),
+                ProcessSupervisorTest.java(), "digest", root.resolve("out").toString(), root.resolve("err").toString(),
+                RunnerProcessStatus.SUCCEEDED, 0));
+        List<String> events = new CopyOnWriteArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
+            events.add("reconcile");
+            String body = new String(exchange.getRequestBody().readAllBytes());
+            assertTrue(body.contains(id.toString())); assertTrue(body.contains("SUCCEEDED"));
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.createContext("/runner-api/v1/heartbeat", exchange -> {
+            events.add("heartbeat"); exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            events.add("poll"); reject(exchange, "RUNNER_AUTH_INVALID");
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,
+                    assertThrows(RunnerProtocolException.class, app::run).code());
+            assertEquals("reconcile", events.get(0));
+            assertTrue(events.contains("poll"));
+        }
+        finally { server.stop(0); }
+    }
     @Test void heartbeatRejectionWhilePollWaitsPreventsReturnedLeaseFromStarting() throws Exception
     {
         UUID id = UUID.randomUUID();
@@ -47,6 +79,7 @@ class RunnerApplicationTest
         server.createContext("/runner-api/v1/commands/" + id + "/reports", exchange -> {
             reports.incrementAndGet(); exchange.sendResponseHeaders(204, -1); exchange.close();
         });
+        allowReconcile(server);
         server.start();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try (RunnerApplication app = application(server))
@@ -68,6 +101,7 @@ class RunnerApplicationTest
         server.createContext("/runner-api/v1/commands/poll", exchange -> {
             polls.incrementAndGet(); reject(exchange, "RUNNER_AUTH_INVALID");
         });
+        allowReconcile(server);
         server.start();
         try (RunnerApplication app = application(server))
         {
@@ -93,6 +127,7 @@ class RunnerApplicationTest
         server.createContext("/runner-api/v1/commands/" + id + "/reports", exchange -> {
             reports.incrementAndGet(); reject(exchange, "COMMAND_STATUS_CONFLICT");
         });
+        allowReconcile(server);
         server.start();
         try (RunnerApplication app = application(server))
         {
@@ -112,6 +147,10 @@ class RunnerApplicationTest
         byte[] body = ("{\"errorCode\":\"" + code + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(400, body.length); exchange.getResponseBody().write(body); exchange.close();
     }
+    private static void allowReconcile(HttpServer server)
+    { server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
+        exchange.getRequestBody().readAllBytes(); exchange.sendResponseHeaders(204, -1); exchange.close();
+    }); }
     @Test void executesLeaseAndRetriesRunningReportBeforeReportingExit() throws Exception
     {
         UUID id = UUID.randomUUID();
@@ -130,6 +169,7 @@ class RunnerApplicationTest
             reports.add(json.readValue(exchange.getRequestBody(), RunnerCommandReport.class));
             exchange.sendResponseHeaders(attempts.getAndIncrement() == 0 ? 503 : 204, -1); exchange.close();
         });
+        allowReconcile(server);
         server.start();
         try
         {

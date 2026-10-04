@@ -47,4 +47,8 @@ public interface RunnerCommandMapper
             @Param("attempt") int attempt, @Param("now") Instant now,
             @Param("result") String result, @Param("errorCode") String errorCode,
             @Param("leaseUntil") Instant leaseUntil);
+
+    int advanceReconciled(@Param("runnerId") Long runnerId, @Param("commandId") Long commandId,
+            @Param("expectedStatus") String expectedStatus, @Param("nextStatus") String nextStatus,
+            @Param("now") Instant now);
 }

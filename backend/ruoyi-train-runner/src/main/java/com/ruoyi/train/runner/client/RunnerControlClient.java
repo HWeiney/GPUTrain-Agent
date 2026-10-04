@@ -36,6 +36,9 @@ public final class RunnerControlClient
     public void report(UUID id, RunnerCommandReport report) throws IOException, InterruptedException
     { send("POST", "/runner-api/v1/commands/" + id + "/reports", report, true); }
 
+    public void reconcile(List<RunnerProcessSnapshot> snapshots) throws IOException, InterruptedException
+    { send("POST", "/runner-api/v1/processes/reconcile", snapshots, true); }
+
     private byte[] send(String method, String path, Object value, boolean signed) throws IOException, InterruptedException
     {
         byte[] body = value == null ? new byte[0] : json.writeValueAsBytes(value);
