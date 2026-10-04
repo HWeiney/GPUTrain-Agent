@@ -9,6 +9,13 @@ import java.time.Instant;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +27,8 @@ import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.core.runner.mapper.RunnerCommandMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.train.runner.protocol.RunnerCommandLease;
+import com.ruoyi.train.runner.protocol.RunnerCommandType;
+import com.ruoyi.train.runner.protocol.ProcessSpec;
 import com.ruoyi.train.runner.protocol.RunnerErrorCode;
 import com.ruoyi.train.runner.protocol.RunnerProtocolException;
 import com.ruoyi.train.runner.protocol.RunnerRegistration;
@@ -90,6 +99,63 @@ class RunnerControllerSecurityTest
                     .getStatusCode().value());
         }
         finally { scheduler.shutdownNow(); }
+    }
+
+    @Test
+    void timeoutWaitsForInFlightLeaseAndDeliversCommittedCommand() throws Exception
+    {
+        RunnerCommandMapper mapper = (RunnerCommandMapper) Proxy.newProxyInstance(
+                RunnerCommandMapper.class.getClassLoader(), new Class<?>[] { RunnerCommandMapper.class },
+                (proxy, method, args) -> null);
+        CountDownLatch leaseEntered = new CountDownLatch(1);
+        CountDownLatch releaseLease = new CountDownLatch(1);
+        CountDownLatch timeoutEntered = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        RunnerCommandLease command = new RunnerCommandLease(UUID.randomUUID(), RunnerCommandType.START_PROCESS,
+                new ProcessSpec("/tmp", "/bin/true", List.of(), Map.of(), 30, "poll-race"),
+                null, Instant.now().plusSeconds(30), 1);
+        RunnerCommandService service = new RunnerCommandService(mapper, new ObjectMapper())
+        {
+            @Override public Optional<RunnerCommandLease> leaseNext(String runnerId, Instant now, Duration duration)
+            {
+                if (calls.incrementAndGet() == 1) return Optional.empty();
+                leaseEntered.countDown();
+                try { if (!releaseLease.await(5, TimeUnit.SECONDS)) throw new AssertionError("lease not released"); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+                return Optional.of(command);
+            }
+        };
+        var scheduler = Executors.newSingleThreadScheduledExecutor();
+        var timeoutExecutor = Executors.newSingleThreadExecutor();
+        try
+        {
+            var result = new RunnerApiController(null, service, scheduler).poll("1", 20);
+            assertTrue(leaseEntered.await(5, TimeUnit.SECONDS));
+            var timeout = (org.springframework.web.context.request.async.DeferredResultProcessingInterceptor)
+                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(result, "getLifecycleInterceptor");
+            var timeoutFuture = timeoutExecutor.submit(() ->
+            {
+                timeoutEntered.countDown();
+                try { timeout.handleTimeout(null, result); }
+                catch (Exception failure) { throw new RuntimeException(failure); }
+            });
+            assertTrue(timeoutEntered.await(5, TimeUnit.SECONDS));
+            try
+            {
+                assertThrows(TimeoutException.class, () -> timeoutFuture.get(100, TimeUnit.MILLISECONDS));
+            }
+            finally { releaseLease.countDown(); }
+            timeoutFuture.get(5, TimeUnit.SECONDS);
+            var response = (org.springframework.http.ResponseEntity<?>) result.getResult();
+            assertEquals(200, response.getStatusCode().value());
+            assertEquals(command, response.getBody());
+        }
+        finally
+        {
+            releaseLease.countDown();
+            timeoutExecutor.shutdownNow();
+            scheduler.shutdownNow();
+        }
     }
 
     @Test

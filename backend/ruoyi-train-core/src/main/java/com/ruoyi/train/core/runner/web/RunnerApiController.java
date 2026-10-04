@@ -63,13 +63,23 @@ public class RunnerApiController
         if (timeoutSeconds < 0) throw new IllegalArgumentException("Poll timeout cannot be negative");
         int boundedSeconds = Math.min(timeoutSeconds, 20);
         DeferredResult<ResponseEntity<RunnerCommandLease>> result = new DeferredResult<>(boundedSeconds * 1000L);
-        result.onTimeout(() -> result.setResult(ResponseEntity.noContent().build()));
-        if (tryLease(runnerId, result) || boundedSeconds == 0)
+        Object deliveryLock = new Object();
+        result.onTimeout(() ->
         {
-            if (!result.isSetOrExpired()) result.setResult(ResponseEntity.noContent().build());
+            synchronized (deliveryLock)
+            {
+                if (!result.isSetOrExpired()) result.setResult(ResponseEntity.noContent().build());
+            }
+        });
+        if (tryLease(runnerId, result, deliveryLock) || boundedSeconds == 0)
+        {
+            synchronized (deliveryLock)
+            {
+                if (!result.isSetOrExpired()) result.setResult(ResponseEntity.noContent().build());
+            }
             return result;
         }
-        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> tryLease(runnerId, result),
+        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> tryLease(runnerId, result, deliveryLock),
                 250, 250, TimeUnit.MILLISECONDS);
         result.onCompletion(() -> future.cancel(false));
         return result;
@@ -84,18 +94,22 @@ public class RunnerApiController
         return commandService.report(runnerId, id, report);
     }
 
-    private boolean tryLease(String runnerId, DeferredResult<ResponseEntity<RunnerCommandLease>> result)
+    private boolean tryLease(String runnerId, DeferredResult<ResponseEntity<RunnerCommandLease>> result,
+            Object deliveryLock)
     {
-        if (result.isSetOrExpired()) return true;
-        try
+        synchronized (deliveryLock)
         {
-            return commandService.leaseNext(runnerId, Instant.now(), Duration.ofSeconds(30))
-                    .map(lease -> result.setResult(ResponseEntity.ok(lease))).orElse(false);
-        }
-        catch (RuntimeException failure)
-        {
-            result.setErrorResult(failure);
-            return true;
+            if (result.isSetOrExpired()) return true;
+            try
+            {
+                return commandService.leaseNext(runnerId, Instant.now(), Duration.ofSeconds(30))
+                        .map(lease -> result.setResult(ResponseEntity.ok(lease))).orElse(false);
+            }
+            catch (RuntimeException failure)
+            {
+                result.setErrorResult(failure);
+                return true;
+            }
         }
     }
 }

@@ -89,6 +89,18 @@ class RunnerSchemaContractTest
     }
 
     @Test
+    void commandIdempotencyKeyUsesBinaryCollationOnFreshAndExistingTables() throws IOException
+    {
+        String sql = Files.readString(Path.of("../sql/gputrain_runner.sql"));
+        assertAll(
+            () -> assertTrue(sql.contains("idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL")),
+            () -> assertTrue(sql.contains("TABLE_NAME = 'train_runner_command'")),
+            () -> assertTrue(sql.contains("SET @runner_command_ddl = IF(")),
+            () -> assertTrue(sql.contains("ALTER TABLE train_runner_command MODIFY COLUMN idempotency_key")),
+            () -> assertTrue(sql.contains("COLLATION_NAME <> 'utf8mb4_0900_bin'")));
+    }
+
+    @Test
     void enrollmentConsumeRequiresDigestAndUnexpiredUnconsumedGrant() throws IOException
     {
         String xml = mapperXml("RunnerEnrollmentMapper");
@@ -111,7 +123,8 @@ class RunnerSchemaContractTest
             () -> assertTrue(xml.contains("status = 'QUEUED' OR (status = 'LEASED' AND lease_until &lt; #{now})")),
             () -> assertTrue(xml.contains("ORDER BY created_at, command_id")),
             () -> assertTrue(xml.contains("id=\"markLeased\"")),
-            () -> assertTrue(xml.contains("WHERE command_id = #{commandId}")));
+            () -> assertTrue(xml.contains("WHERE runner_id = #{runnerId} AND command_id = #{commandId}")),
+            () -> assertTrue(xml.contains("attempt_count = #{attempt}")));
     }
 
     @Test

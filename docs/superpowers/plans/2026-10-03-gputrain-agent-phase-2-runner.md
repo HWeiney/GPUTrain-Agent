@@ -181,11 +181,11 @@ public record RunnerCredentials(String runnerId, String runnerName, String secre
 }
 
 public record RunnerCommandLease(UUID commandId, RunnerCommandType type,
-        ProcessSpec process, UUID targetCommandId, Instant leaseUntil) { }
+        ProcessSpec process, UUID targetCommandId, Instant leaseUntil, int attempt) { }
 
 public record RunnerCommandReport(RunnerCommandStatus previousStatus,
         RunnerCommandStatus status, Long pid, Instant processStartedAt,
-        Integer exitCode, RunnerErrorCode errorCode, String errorMessage) { }
+        Integer exitCode, RunnerErrorCode errorCode, String errorMessage, int attempt) { }
 
 public record RunnerProcessSnapshot(UUID commandId, long pid, Instant processStartedAt,
         String executable, String argumentsSha256, RunnerProcessStatus status,
@@ -259,6 +259,7 @@ git commit -m "feat: define runner protocol and request signing"
 - Produces: `RunnerCommandMapper.leaseNext(runnerId, now, leasedUntil)` with transaction-level row locking.
 - Produces: unique database keys on Runner name, enrollment token digest, enrollment idempotency key, and `(runner_id, idempotency_key)`.
 - The enrollment idempotency key uses MySQL `utf8mb4_0900_bin` collation. Keep `backend/sql/gputrain_runner.sql` as the single fresh-install/manual-upgrade source: conditionally add missing token-ciphertext and idempotency columns, backfill legacy null/blank keys with row-specific migration values, make the key `NOT NULL` with binary collation, and conditionally add its unique index so reruns are safe.
+- The command idempotency key also uses `utf8mb4_0900_bin` in fresh schemas; the same SQL file conditionally alters existing command tables to that collation. The command's `attempt_count` is the durable lease generation and increments on every lease.
 
 - [ ] **Step 1: Write a failing schema contract test that reads the SQL resource**
 
@@ -557,7 +558,7 @@ Expected: FAIL because `RunnerCommandService` does not exist.
 
 - [ ] **Step 3: Implement transactional lease and compare-and-set status reports**
 
-Create or find by `(runnerId, idempotencyKey)`. Lease inside a transaction using the Task 2 mapper lock. Reports require the persisted state to match the reported `previousStatus`; duplicate reports returning the already-persisted same state are successful; terminal states reject any different next state.
+Create or find by `(runnerId, idempotencyKey)`, comparing the raw key exactly on duplicate lookup and reserving `stop:` case-insensitively. Lease inside a transaction using the Task 2 mapper lock and return the incremented `attempt_count`. Every report carries that attempt. SQL updates compare Runner ID, command ID, attempt, and expected state; leased-state updates also compare lease expiry. A stale attempt is rejected even before the newer Runner reports. Duplicate reports succeed only for the same attempt and already-persisted state; terminal states reject different next states. Return safe stable errors for missing/foreign commands (404) and stale/expired leases or status conflicts (409).
 
 - [ ] **Step 4: Expose management and Runner endpoints**
 
@@ -568,7 +569,7 @@ GET  /runner-api/v1/commands/poll?timeoutSeconds=20
 POST /runner-api/v1/commands/{id}/reports
 ```
 
-Use Spring `DeferredResult` with a maximum 20-second wait. The database lease happens before returning a command; a timeout returns HTTP 204. Do not hold a database transaction open while waiting.
+Use Spring `DeferredResult` with a maximum 20-second wait. The database lease happens before returning a command; a timeout returns HTTP 204. Coordinate the timeout callback with each in-flight lease and result delivery so a committed lease cannot be silently lost after a 204. Do not hold a database transaction open while waiting. Cover the race with a latch-controlled concurrency test.
 
 - [ ] **Step 5: Add permission rows idempotently to `gputrain_runner.sql`**
 

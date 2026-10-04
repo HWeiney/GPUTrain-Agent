@@ -5,7 +5,7 @@ import java.util.Objects;
 
 public record RunnerCommandReport(RunnerCommandStatus previousStatus,
         RunnerCommandStatus status, Long pid, Instant processStartedAt,
-        Integer exitCode, RunnerErrorCode errorCode, String errorMessage)
+        Integer exitCode, RunnerErrorCode errorCode, String errorMessage, int attempt)
 {
     public RunnerCommandReport
     {

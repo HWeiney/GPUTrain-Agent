@@ -56,27 +56,30 @@
         UPDATE train_runner_command
         SET status = 'LEASED', lease_until = #{leasedUntil},
             attempt_count = attempt_count + 1, updated_at = #{now}
-        WHERE command_id = #{commandId}
+        WHERE runner_id = #{runnerId} AND command_id = #{commandId}
           AND (status = 'QUEUED' OR (status = 'LEASED' AND lease_until &lt; #{now}))
     </update>
 
     <update id="markRunning">
         UPDATE train_runner_command
         SET status = 'RUNNING', updated_at = #{now}
-        WHERE command_id = #{commandId} AND status = 'LEASED'
+        WHERE runner_id = #{runnerId} AND command_id = #{commandId}
+          AND attempt_count = #{attempt} AND status = 'LEASED'
           AND lease_until = #{leaseUntil} AND lease_until &gt;= #{now}
     </update>
 
     <update id="complete">
         UPDATE train_runner_command
         SET status = #{status}, result = #{result}, error_code = #{errorCode}, updated_at = #{now}
-        WHERE command_id = #{commandId} AND status = 'RUNNING'
+        WHERE runner_id = #{runnerId} AND command_id = #{commandId}
+          AND attempt_count = #{attempt} AND status = 'RUNNING'
     </update>
 
     <update id="markRejected">
         UPDATE train_runner_command
         SET status = 'REJECTED', result = #{result}, error_code = #{errorCode}, updated_at = #{now}
-        WHERE command_id = #{commandId} AND status = 'LEASED'
+        WHERE runner_id = #{runnerId} AND command_id = #{commandId}
+          AND attempt_count = #{attempt} AND status = 'LEASED'
           AND lease_until = #{leaseUntil} AND lease_until &gt;= #{now}
     </update>
 </mapper>

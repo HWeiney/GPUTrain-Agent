@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS train_runner_command (
     runner_id BIGINT NOT NULL,
     command_type VARCHAR(64) NOT NULL,
     payload JSON NULL,
-    idempotency_key VARCHAR(128) NOT NULL,
+    idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     status VARCHAR(64) NOT NULL,
     lease_until DATETIME(3) NULL,
     attempt_count INT NOT NULL DEFAULT 0,
@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS train_runner_command (
     KEY idx_command_poll (runner_id, status, created_at),
     CONSTRAINT fk_command_runner FOREIGN KEY (runner_id) REFERENCES train_runner (runner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET @runner_command_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'train_runner_command'
+       AND COLUMN_NAME = 'idempotency_key'
+       AND (IS_NULLABLE = 'YES' OR COLLATION_NAME <> 'utf8mb4_0900_bin'
+            OR CHARACTER_MAXIMUM_LENGTH <> 128)) > 0,
+    'ALTER TABLE train_runner_command MODIFY COLUMN idempotency_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL',
+    'SELECT 1'
+);
+PREPARE runner_command_stmt FROM @runner_command_ddl;
+EXECUTE runner_command_stmt;
+DEALLOCATE PREPARE runner_command_stmt;
 
 CREATE TABLE IF NOT EXISTS train_runner_process (
     process_id BIGINT NOT NULL AUTO_INCREMENT,

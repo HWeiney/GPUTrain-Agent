@@ -73,15 +73,19 @@ class RunnerProtocolTest
         Instant until = Instant.now();
         ProcessSpec process = new ProcessSpec("/tmp", "/usr/bin/java", List.of(), Map.of(), 60, "key");
         assertEquals(process, new RunnerCommandLease(commandId, RunnerCommandType.START_PROCESS,
-            process, null, until).process());
+            process, null, until, 1).process());
         assertEquals(targetId, new RunnerCommandLease(commandId, RunnerCommandType.STOP_PROCESS,
-            null, targetId, until).targetCommandId());
+            null, targetId, until, 2).targetCommandId());
+        assertEquals(2, new RunnerCommandLease(commandId, RunnerCommandType.STOP_PROCESS,
+            null, targetId, until, 2).attempt());
         assertThrows(IllegalArgumentException.class,
-            () -> new RunnerCommandLease(commandId, RunnerCommandType.START_PROCESS, null, null, until));
+            () -> new RunnerCommandLease(commandId, RunnerCommandType.START_PROCESS, null, null, until, 1));
         assertThrows(IllegalArgumentException.class,
-            () -> new RunnerCommandLease(commandId, RunnerCommandType.STOP_PROCESS, process, targetId, until));
+            () -> new RunnerCommandLease(commandId, RunnerCommandType.STOP_PROCESS, process, targetId, until, 1));
         assertThrows(NullPointerException.class,
-            () -> new RunnerCommandLease(null, RunnerCommandType.START_PROCESS, process, null, until));
+            () -> new RunnerCommandLease(null, RunnerCommandType.START_PROCESS, process, null, until, 1));
+        assertThrows(IllegalArgumentException.class,
+            () -> new RunnerCommandLease(commandId, RunnerCommandType.START_PROCESS, process, null, until, 0));
     }
 
     @Test
@@ -107,7 +111,9 @@ class RunnerProtocolTest
         assertThrows(NullPointerException.class, () -> new RunnerRegistration(1, null, "runner", "linux"));
         assertThrows(NullPointerException.class, () -> new RunnerCredentials("id", "runner", null));
         assertThrows(NullPointerException.class,
-            () -> new RunnerCommandReport(null, RunnerCommandStatus.RUNNING, null, null, null, null, null));
+            () -> new RunnerCommandReport(null, RunnerCommandStatus.RUNNING, null, null, null, null, null, 1));
+        assertEquals(0, new RunnerCommandReport(RunnerCommandStatus.LEASED, RunnerCommandStatus.RUNNING,
+                null, null, null, null, null, 0).attempt());
         assertThrows(NullPointerException.class,
             () -> new RunnerProcessSnapshot(commandId, 1, now, "/usr/bin/java", "hash", null, null, null));
         assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,

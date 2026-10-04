@@ -22,6 +22,11 @@ import com.ruoyi.train.core.runner.config.RunnerSecurityProperties;
 import com.ruoyi.train.core.runner.security.RunnerTransportSecurityGuard;
 import com.ruoyi.train.runner.protocol.RunnerErrorCode;
 import com.ruoyi.train.runner.protocol.RunnerProtocolException;
+import com.ruoyi.train.core.runner.service.RunnerCommandService;
+import com.ruoyi.train.core.runner.mapper.RunnerCommandMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.reflect.Proxy;
+import java.util.UUID;
 
 class RunnerProtocolExceptionHandlerMvcTest
 {
@@ -89,6 +94,42 @@ class RunnerProtocolExceptionHandlerMvcTest
         assertTrue(result.getResponse().getContentAsString()
                 .contains("\"errorCode\":\"RUNNER_REQUEST_TOO_LARGE\""));
         assertFalse(result.getResponse().getContentAsString().contains("internal-detail"));
+    }
+
+    @Test
+    void signedReportErrorsUseStableStatusAndHideInternalDetail() throws Exception
+    {
+        assertReportError(RunnerErrorCode.COMMAND_NOT_FOUND, 404);
+        assertReportError(RunnerErrorCode.COMMAND_LEASE_EXPIRED, 409);
+        assertReportError(RunnerErrorCode.COMMAND_STATUS_CONFLICT, 409);
+    }
+
+    private void assertReportError(RunnerErrorCode code, int expectedStatus) throws Exception
+    {
+        RunnerCommandMapper mapper = (RunnerCommandMapper) Proxy.newProxyInstance(
+                RunnerCommandMapper.class.getClassLoader(), new Class<?>[] { RunnerCommandMapper.class },
+                (proxy, method, args) -> null);
+        RunnerCommandService service = new RunnerCommandService(mapper, new ObjectMapper())
+        {
+            @Override
+            public com.ruoyi.train.core.runner.domain.RunnerCommandRecord report(String runnerId,
+                    UUID commandId, com.ruoyi.train.runner.protocol.RunnerCommandReport report)
+            {
+                throw new RunnerProtocolException(code, "internal database secret");
+            }
+        };
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new RunnerApiController(null, service, null))
+                .setControllerAdvice(new RunnerProtocolExceptionHandler(), new GenericRuntimeExceptionAdvice())
+                .build();
+        MvcResult result = mvc.perform(post("/runner-api/v1/commands/{id}/reports", UUID.randomUUID())
+                .requestAttr(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE, "1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previousStatus\":\"LEASED\",\"status\":\"RUNNING\",\"attempt\":1}"))
+                .andReturn();
+        assertEquals(expectedStatus, result.getResponse().getStatus());
+        String response = result.getResponse().getContentAsString();
+        assertTrue(response.contains("\"errorCode\":\"" + code.name() + "\""));
+        assertFalse(response.contains("internal database secret"));
     }
 
     @RestController

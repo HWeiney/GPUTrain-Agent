@@ -43,6 +43,8 @@ public class RunnerProtocolExceptionHandler
             case RUNNER_HTTPS_REQUIRED -> HttpStatus.FORBIDDEN;
             case RUNNER_TEMPORARILY_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case RUNNER_REQUEST_TOO_LARGE -> HttpStatus.PAYLOAD_TOO_LARGE;
+            case COMMAND_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case COMMAND_LEASE_EXPIRED, COMMAND_STATUS_CONFLICT -> HttpStatus.CONFLICT;
             default -> HttpStatus.BAD_REQUEST;
         };
     }

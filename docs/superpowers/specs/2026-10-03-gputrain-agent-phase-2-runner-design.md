@@ -118,7 +118,7 @@ Nonce 使用 Redis 保证短期防重放。对心跳、领命令、启动确认�
 
 ### 6.3 `train_runner_command`
 
-保存命令 ID、Runner ID、类型、结构化负载、幂等键、状态、租约截止时间、尝试次数、结果、错误码、创建时间和更新时间。`runner_id + idempotency_key` 具有唯一约束。
+保存命令 ID、Runner ID、类型、结构化负载、幂等键、状态、租约截止时间、尝试次数、结果、错误码、创建时间和更新时间。`runner_id + idempotency_key` 具有唯一约束，幂等键使用 `utf8mb4_0900_bin` 二进制排序规则；升级脚本对现有命令表重复执行时按需修正排序规则。`stop:` 前缀（不区分大小写）保留给停止命令，重复创建时还要用 Java 精确比较原始幂等键。
 
 命令状态为：
 
@@ -130,6 +130,8 @@ QUEUED -> LEASED -> RUNNING -> SUCCEEDED
 ```
 
 租约超时只允许尚未确认启动的命令重新进入可领取状态。已经报告 `RUNNING` 的命令必须通过进程对账确定状态，不能因 HTTP 租约过期而重新启动。
+
+每次领取把持久化的 `attempt_count` 加一，并在 `RunnerCommandLease.attempt` 返回。`RunnerCommandReport.attempt` 必须回传该值；`RUNNING`、终态及 `REJECTED` 更新均同时比较 Runner ID、命令 ID、尝试次数和预期状态。旧租约的报告即使先于新租约的报告到达，也不能修改新租约。重复报告只在尝试次数与当前记录一致且状态已经相同时返回已存结果。
 
 ### 6.4 `train_runner_process`
 
@@ -161,7 +163,7 @@ MySQL 是 Runner、命令和进程状态的持久化事实来源；Redis 只保�
   -> 进程退出后上报 SUCCEEDED / FAILED / STOPPED
 ```
 
-长轮询在超时且无命令时返回空响应。网络超时后 Runner 使用退避和抖动重试；命令 ID 与幂等键使重复领取、重复启动确认和重复最终结果上报返回已有状态，而不是产生第二个进程。
+长轮询最多等待 20 秒，在超时且无命令时返回 HTTP 204。每个轮询请求协调租约领取与超时响应：领取中的短事务先完成并交付命令，超时不能先返回 204 后丢弃已提交租约；等待期间不持有数据库事务。网络超时后 Runner 使用退避和抖动重试；命令 ID、尝试次数与幂等键使重复领取、重复启动确认和重复最终结果上报返回已有状态，而不是产生第二个进程。
 
 稳定错误码至少包括：
 
@@ -174,6 +176,8 @@ MySQL 是 Runner、命令和进程状态的持久化事实来源；Redis 只保�
 - `RUNNER_REQUEST_TOO_LARGE`
 - `RUNNER_TEMPORARILY_UNAVAILABLE`
 - `COMMAND_LEASE_EXPIRED`
+- `COMMAND_NOT_FOUND`（HTTP 404）
+- `COMMAND_STATUS_CONFLICT`（HTTP 409；租约过期也返回 HTTP 409）
 - `WORK_DIR_OUTSIDE_ALLOWED_ROOT`
 - `WORK_DIR_SYMLINK_ESCAPE`
 - `EXECUTABLE_NOT_ALLOWED`

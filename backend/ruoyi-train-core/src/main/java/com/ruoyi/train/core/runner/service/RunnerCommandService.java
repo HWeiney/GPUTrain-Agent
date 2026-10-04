@@ -47,7 +47,7 @@ public class RunnerCommandService
         if (creatorUserId <= 0) throw new IllegalArgumentException("Creator user ID must be positive");
         if (spec.idempotencyKey().length() > 128)
             throw new IllegalArgumentException("Command idempotency key is too long");
-        if (spec.idempotencyKey().startsWith("stop:"))
+        if (spec.idempotencyKey().regionMatches(true, 0, "stop:", 0, 5))
             throw new IllegalArgumentException("Command idempotency key uses reserved stop namespace");
         long id = numericRunnerId(runnerId);
         RunnerCommandRecord existing = mapper.findByRunnerAndIdempotencyKey(id, spec.idempotencyKey());
@@ -85,11 +85,13 @@ public class RunnerCommandService
         Objects.requireNonNull(commandId, "commandId");
         Objects.requireNonNull(report, "report");
         RunnerCommandRecord current = owned(runnerId, commandId);
+        requireAttempt(current, report.attempt());
         if (current.status().equals(report.status().name())) return current;
         RunnerCommandStatus persisted = RunnerCommandStatus.valueOf(current.status());
         if (persisted != report.previousStatus())
-            throw new IllegalStateException("Command report previous status does not match persisted status");
-        persisted.requireTransitionTo(report.status());
+            throw statusConflict();
+        try { persisted.requireTransitionTo(report.status()); }
+        catch (IllegalStateException invalidTransition) { throw statusConflict(); }
         Instant now = clock.instant();
         if (persisted == RunnerCommandStatus.LEASED
                 && (current.leaseUntil() == null || current.leaseUntil().isBefore(now)))
@@ -97,18 +99,22 @@ public class RunnerCommandService
                     "Command lease expired before Runner report");
         int updated = switch (report.status())
         {
-            case RUNNING -> mapper.markRunning(current.commandId(), now, current.leaseUntil());
-            case REJECTED -> mapper.markRejected(current.commandId(), now, writeJson(report),
+            case RUNNING -> mapper.markRunning(current.runnerId(), current.commandId(), report.attempt(),
+                    now, current.leaseUntil());
+            case REJECTED -> mapper.markRejected(current.runnerId(), current.commandId(), report.attempt(),
+                    now, writeJson(report),
                     report.errorCode() == null ? null : report.errorCode().name(), current.leaseUntil());
-            case SUCCEEDED, FAILED, STOPPED -> mapper.complete(current.commandId(), report.status().name(),
-                    writeJson(report), report.errorCode() == null ? null : report.errorCode().name(), now);
-            default -> throw new IllegalStateException("Runner cannot report this command status");
+            case SUCCEEDED, FAILED, STOPPED -> mapper.complete(current.runnerId(), current.commandId(),
+                    report.attempt(), report.status().name(), writeJson(report),
+                    report.errorCode() == null ? null : report.errorCode().name(), now);
+            default -> throw statusConflict();
         };
         if (updated != 1)
         {
             RunnerCommandRecord latest = owned(runnerId, commandId);
+            requireAttempt(latest, report.attempt());
             if (latest.status().equals(report.status().name())) return latest;
-            throw new IllegalStateException("Command status changed concurrently");
+            throw statusConflict();
         }
         return Objects.requireNonNull(mapper.findById(current.commandId()));
     }
@@ -140,11 +146,32 @@ public class RunnerCommandService
 
     private RunnerCommandRecord owned(String runnerId, UUID commandId)
     {
-        long id = numericRunnerId(runnerId);
+        long id;
+        try { id = numericRunnerId(runnerId); }
+        catch (IllegalArgumentException invalidId) { throw commandNotFound(); }
         RunnerCommandRecord command = mapper.findByUuid(commandId.toString());
         if (command == null || command.runnerId() != id)
-            throw new IllegalArgumentException("Command does not belong to Runner");
+            throw commandNotFound();
         return command;
+    }
+
+    private static void requireAttempt(RunnerCommandRecord command, int attempt)
+    {
+        if (command.attemptCount() != attempt)
+            throw new RunnerProtocolException(RunnerErrorCode.COMMAND_LEASE_EXPIRED,
+                    "Command lease generation is no longer current");
+    }
+
+    private static RunnerProtocolException commandNotFound()
+    {
+        return new RunnerProtocolException(RunnerErrorCode.COMMAND_NOT_FOUND,
+                "Command not found for Runner");
+    }
+
+    private static RunnerProtocolException statusConflict()
+    {
+        return new RunnerProtocolException(RunnerErrorCode.COMMAND_STATUS_CONFLICT,
+                "Command status conflicts with report");
     }
 
     private RunnerCommandRecord sameStart(RunnerCommandRecord existing, ProcessSpec spec)
@@ -169,10 +196,11 @@ public class RunnerCommandService
         RunnerCommandType type = RunnerCommandType.valueOf(command.commandType());
         return type == RunnerCommandType.START_PROCESS
                 ? new RunnerCommandLease(UUID.fromString(command.commandUuid()), type,
-                        readJson(command.payload(), ProcessSpec.class), null, command.leaseUntil())
+                        readJson(command.payload(), ProcessSpec.class), null, command.leaseUntil(),
+                        command.attemptCount())
                 : new RunnerCommandLease(UUID.fromString(command.commandUuid()), type, null,
                         UUID.fromString(readTree(command.payload()).path("targetCommandId").asText()),
-                        command.leaseUntil());
+                        command.leaseUntil(), command.attemptCount());
     }
 
     private static RunnerCommandRecord queued(long runnerId, RunnerCommandType type, String payload, String key)
