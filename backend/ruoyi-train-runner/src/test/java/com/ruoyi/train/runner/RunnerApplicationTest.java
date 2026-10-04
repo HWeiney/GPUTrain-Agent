@@ -18,6 +18,58 @@ import com.ruoyi.train.runner.protocol.*;
 class RunnerApplicationTest
 {
     @TempDir Path root;
+    @Test void permanentAuthenticationRejectionStopsRunWithoutRetrying() throws Exception
+    {
+        AtomicInteger polls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/heartbeat", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            polls.incrementAndGet(); reject(exchange, "RUNNER_AUTH_INVALID");
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
+                assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code()));
+            assertThrows(RunnerProtocolException.class, app::tick);
+            assertEquals(1, polls.get());
+        }
+        finally { server.stop(0); }
+    }
+    @Test void statusConflictIsQuarantinedInsteadOfBlockingLaterPolls() throws Exception
+    {
+        UUID id = UUID.randomUUID();
+        var lease = new RunnerCommandLease(id, RunnerCommandType.START_PROCESS,
+            new ProcessSpec(root.toString(), ProcessSupervisorTest.java(), ProcessSupervisorTest.args("--mode", "success"), Map.of(), 10, "conflict"), null, Instant.now().plusSeconds(30), 1);
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        AtomicInteger polls = new AtomicInteger(); AtomicInteger reports = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            polls.incrementAndGet(); byte[] body = json.writeValueAsBytes(lease);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
+        server.createContext("/runner-api/v1/commands/" + id + "/reports", exchange -> {
+            reports.incrementAndGet(); reject(exchange, "COMMAND_STATUS_CONFLICT");
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            app.tick(); app.tick(); app.tick();
+            assertEquals(3, polls.get()); assertEquals(1, reports.get());
+        }
+        finally { server.stop(0); }
+    }
+    private RunnerApplication application(HttpServer server) throws Exception
+    {
+        Properties p = RunnerConfigTest.properties(root);
+        p.setProperty("controlPlaneUrl", "http://127.0.0.1:" + server.getAddress().getPort());
+        return new RunnerApplication(RunnerConfig.from(p));
+    }
+    private static void reject(com.sun.net.httpserver.HttpExchange exchange, String code) throws java.io.IOException
+    {
+        byte[] body = ("{\"errorCode\":\"" + code + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(400, body.length); exchange.getResponseBody().write(body); exchange.close();
+    }
     @Test void executesLeaseAndRetriesRunningReportBeforeReportingExit() throws Exception
     {
         UUID id = UUID.randomUUID();

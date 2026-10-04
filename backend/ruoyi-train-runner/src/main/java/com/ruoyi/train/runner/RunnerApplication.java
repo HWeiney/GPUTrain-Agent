@@ -19,8 +19,13 @@ public final class RunnerApplication implements AutoCloseable
     private final ProcessSupervisor supervisor = new ProcessSupervisor();
     private final Map<UUID, RunnerCommandLease> active = new LinkedHashMap<>();
     private final Deque<PendingReport> pending = new ArrayDeque<>();
+    private final Set<UUID> reconciliationRequired = new HashSet<>();
     private final ScheduledExecutorService heartbeats = Executors.newSingleThreadScheduledExecutor();
+    private final RetryBackoff controlBackoff = new RetryBackoff();
+    private final RetryBackoff heartbeatBackoff = new RetryBackoff();
     private volatile boolean closed;
+    private volatile RuntimeException terminalFailure;
+    private volatile IOException terminalTransportFailure;
 
     public RunnerApplication(RunnerConfig config)
     {
@@ -46,23 +51,40 @@ public final class RunnerApplication implements AutoCloseable
     public void run() throws IOException, InterruptedException
     {
         byte[] secret = config.readSecret(); Arrays.fill(secret, (byte) 0);
-        heartbeats.scheduleWithFixedDelay(() -> {
-            try { client.heartbeat(new RunnerHeartbeat(config.runnerId(), System.getProperty("user.name"), Instant.now())); }
-            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-            catch (IOException | RuntimeException failure) { System.err.println("Runner heartbeat failed; retrying."); }
-        }, 0, config.heartbeatInterval().toMillis(), TimeUnit.MILLISECONDS);
+        scheduleHeartbeat(0);
         while (!closed && !Thread.currentThread().isInterrupted())
         {
-            try { tick(); }
-            catch (IOException | RunnerProtocolException failure)
+            try { tick(); controlBackoff.reset(); }
+            catch (RunnerProtocolException failure)
             {
-                System.err.println("Runner control request failed; retrying.");
-                Thread.sleep(1000);
+                if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) throw failure;
+                Thread.sleep(controlBackoff.nextDelayMillis());
+            }
+            catch (IOException failure)
+            {
+                if (!retryable(failure)) throw failure;
+                Thread.sleep(controlBackoff.nextDelayMillis());
             }
         }
     }
 
     public void tick() throws IOException, InterruptedException
+    {
+        requireCommunicationAllowed();
+        try { tickOnce(); }
+        catch (RunnerProtocolException failure)
+        {
+            if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) terminalFailure = failure;
+            throw failure;
+        }
+        catch (IOException failure)
+        {
+            if (!retryable(failure)) terminalTransportFailure = failure;
+            throw failure;
+        }
+    }
+
+    private void tickOnce() throws IOException, InterruptedException
     {
         flushReports();
         for (var iterator = active.entrySet().iterator(); iterator.hasNext(); )
@@ -83,7 +105,7 @@ public final class RunnerApplication implements AutoCloseable
 
     private void execute(RunnerCommandLease lease) throws InterruptedException
     {
-        if (lease.leaseUntil().isBefore(Instant.now())) return;
+        if (lease.leaseUntil().isBefore(Instant.now()) || reconciliationRequired.contains(lease.commandId())) return;
         try
         {
             if (lease.type() == RunnerCommandType.START_PROCESS)
@@ -122,13 +144,61 @@ public final class RunnerApplication implements AutoCloseable
             try { client.report(report.commandId(), report.report()); pending.removeFirst(); }
             catch (RunnerProtocolException failure)
             {
-                if (failure.code() != RunnerErrorCode.COMMAND_LEASE_EXPIRED) throw failure;
+                boolean requiresReconciliation = failure.code() == RunnerErrorCode.COMMAND_STATUS_CONFLICT
+                        || failure.code() == RunnerErrorCode.COMMAND_NOT_FOUND;
+                if (!requiresReconciliation && failure.code() != RunnerErrorCode.COMMAND_LEASE_EXPIRED) throw failure;
                 pending.removeIf(p -> p.commandId().equals(report.commandId()));
                 active.remove(report.commandId());
-                // Redelivery will adopt the existing local process using the new lease attempt.
+                if (requiresReconciliation)
+                {
+                    reconciliationRequired.add(report.commandId());
+                    System.err.println("Runner command requires reconciliation; automatic reporting suspended.");
+                }
+                // Only an expired attempt can be adopted on redelivery; conflicts require reconciliation.
             }
         }
     }
+
+    private void scheduleHeartbeat(long delayMillis)
+    {
+        if (closed || terminalFailure != null || terminalTransportFailure != null) return;
+        try { heartbeats.schedule(this::heartbeat, delayMillis, TimeUnit.MILLISECONDS); }
+        catch (RejectedExecutionException stopped) { if (!closed) throw stopped; }
+    }
+
+    private void heartbeat()
+    {
+        long nextDelay;
+        try
+        {
+            requireCommunicationAllowed();
+            client.heartbeat(new RunnerHeartbeat(config.runnerId(), System.getProperty("user.name"), Instant.now()));
+            heartbeatBackoff.reset();
+            nextDelay = config.heartbeatInterval().toMillis();
+        }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
+        catch (RunnerProtocolException failure)
+        {
+            if (failure.code() != RunnerErrorCode.RUNNER_TEMPORARILY_UNAVAILABLE) { terminalFailure = failure; return; }
+            nextDelay = heartbeatBackoff.nextDelayMillis();
+        }
+        catch (IOException failure)
+        {
+            if (!retryable(failure)) { terminalTransportFailure = failure; return; }
+            nextDelay = heartbeatBackoff.nextDelayMillis();
+        }
+        catch (RuntimeException failure) { terminalFailure = failure; return; }
+        scheduleHeartbeat(nextDelay);
+    }
+
+    private void requireCommunicationAllowed() throws IOException
+    {
+        if (terminalFailure != null) throw terminalFailure;
+        if (terminalTransportFailure != null) throw terminalTransportFailure;
+    }
+
+    private static boolean retryable(IOException failure)
+    { return !(failure instanceof RunnerControlClient.HttpFailure http) || http.retryable(); }
 
     @Override public void close()
     {

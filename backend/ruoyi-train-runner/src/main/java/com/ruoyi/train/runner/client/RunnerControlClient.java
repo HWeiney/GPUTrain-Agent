@@ -69,8 +69,15 @@ public final class RunnerControlClient
             }
             catch (IOException | IllegalArgumentException ignored) { }
             if (code != null) throw new RunnerProtocolException(code, "Control plane rejected request");
-            throw new IOException("Control plane HTTP status " + response.statusCode());
+            throw new HttpFailure(response.statusCode());
         }
         return response.body();
+    }
+
+    public static final class HttpFailure extends IOException
+    {
+        private final int status;
+        public HttpFailure(int status) { super("Control plane HTTP status " + status); this.status = status; }
+        public boolean retryable() { return status == 408 || status == 429 || status >= 500; }
     }
 }
