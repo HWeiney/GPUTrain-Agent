@@ -9,8 +9,9 @@
 2026-10-04 在 macOS 本地运行：
 
 ```bash
-mvn -f backend/pom.xml clean package
 mvn -f backend/pom.xml clean test
+mvn -f backend/pom.xml clean package
+test -f backend/ruoyi-train-runner/target/ruoyi-train-runner-3.9.2.jar
 npm --prefix frontend test
 npm --prefix frontend run build:prod
 docker compose --env-file .env.example -f deploy/compose.yaml config -q
@@ -18,9 +19,9 @@ git diff --check
 tar -tf deploy/runner/build/gputrain-runner-bundle.tar.gz
 ```
 
-结果：`mvn clean package` 和 `mvn clean test` 均退出 0；初次在受限沙箱中运行时，13 个需绑定回环 HTTP 端口的测试被系统拒绝，随后在允许该本地端口的环境中重跑上述两条 Maven 命令成功。Vitest 1/1 通过，Vite 6.4.1 转换 2642 个模块并生成生产构建；Compose 结构检查退出 0；`git diff --check` 退出 0。Compose 此处只用仓库的占位 `.env.example` 解析结构，不证明真实 `.env` 的值或服务连通性。远程 Linux 项目当前状态：**待执行**。
+结果：在允许本地测试端口的环境中，`mvn clean test` 和随后执行的 `mvn clean package` 均退出 0，最终 JAR 存在；初次在受限沙箱中运行 Maven 时，13 个需绑定回环 HTTP 端口的测试被系统拒绝。Vitest 1/1 通过，Vite 6.4.1 转换 2642 个模块并生成生产构建；Compose 结构检查退出 0；`git diff --check` 退出 0。Compose 此处只用仓库的占位 `.env.example` 解析结构，不证明真实 `.env` 的值或服务连通性。远程 Linux 项目当前状态：**待执行**。
 
-包内容经 `tar -tzf` 精确核对为上述三个文件；包成员名、JAR 成员名与两个文本配置文件经过 `rg` 检查，未命中 `.env`、私钥、凭据文件、数据目录或典型明文秘密模式。该静态扫描不替代目标环境的秘密管理检查。包 SHA-256：`7a5ce58b5bea12ff30c9252fccb99a6146f4175152c4f79c3e57ee791e0ae540`。
+包内容经 `tar -tzf` 精确核对为上述三个文件；包成员名、JAR 成员名与两个文本配置文件经过 `rg` 检查，未命中 `.env`、私钥、凭据文件、数据目录或典型明文秘密模式。该静态扫描不替代目标环境的秘密管理检查。包 SHA-256：`8c01690e366f760533f875ede7da418e0952f4fdece95dbeacb14de0e9910a7c`。
 
 ## 目标机前提
 
@@ -34,7 +35,7 @@ test -d "$ROOT"
 test "$(realpath "$ROOT")" = "$ROOT"
 test -x /usr/bin/java
 test -f "$ROOT/gputrain-runner-bundle.tar.gz"
-printf '%s  %s\n' '7a5ce58b5bea12ff30c9252fccb99a6146f4175152c4f79c3e57ee791e0ae540' "$ROOT/gputrain-runner-bundle.tar.gz" | sha256sum -c -
+printf '%s  %s\n' '8c01690e366f760533f875ede7da418e0952f4fdece95dbeacb14de0e9910a7c' "$ROOT/gputrain-runner-bundle.tar.gz" | sha256sum -c -
 tar -tzf "$ROOT/gputrain-runner-bundle.tar.gz"
 tar -xzf "$ROOT/gputrain-runner-bundle.tar.gz" -C "$ROOT"
 install -d -m 700 "$ROOT/config" "$HOME/.config/systemd/user"
@@ -121,23 +122,50 @@ for MODE in success failure sleep; do
 done
 ```
 
-在控制面数据库用只读查询查看这三个 UUID 对应的 `train_runner_command.status`、`train_runner_process.pid`、`exit_code`、`process_started_at`；预期 success 为 `SUCCEEDED/0`、failure 为 `FAILED/17`、sleep 为 `RUNNING`。以下查询在控制面终端运行，先以注册响应中的数字设置 `RUNNER_ID`：
+首次重启前，控制面只靠命令上报更新 `train_runner_command`；进程表由恢复后的 `reconcile` 写入，此时不要求 `train_runner_process` 有行。先在控制面只读查询命令状态及 `result` 中的退出码，预期 success 为 `SUCCEEDED/0`、failure 为 `FAILED/17`、sleep 为 `RUNNING`。以下在控制面终端运行，先以注册响应中的数字设置 `RUNNER_ID`：
 
 ```bash
-mysql --database=gputrain --batch --execute="SELECT c.command_uuid, c.command_type, c.status, c.attempt_count, p.pid, p.process_started_at, p.status AS process_status, p.exit_code FROM train_runner_command c LEFT JOIN train_runner_process p ON p.command_id=c.command_id WHERE c.runner_id=$RUNNER_ID ORDER BY c.created_at;"
+mysql --database=gputrain --batch --execute="SELECT command_uuid, command_type, status, attempt_count, JSON_UNQUOTE(JSON_EXTRACT(result, '$.exitCode')) AS reported_exit_code FROM train_runner_command WHERE runner_id=$RUNNER_ID ORDER BY created_at;"
 ```
 
-在目标机 `.gputrain/logs/` 中核对 success 的 `fixture success` 和 failure 的 `fixture failure`，并通过相应状态文件定位日志路径。短时命令的执行记录各应只有一条。不要上传整个日志目录；只记录这些非敏感行和计数。
+在目标机按命令 UUID 读取本地状态文件，核对状态、PID、启动时间、退出码与日志路径。核对 success 的 stdout 恰为 `fixture success`、failure 的 stderr 恰为 `fixture failure`，且两者各有一个状态文件；不要上传整个日志目录。sleep 的本地状态应为 `RUNNING`，用精确 PID 的 `ps` 和本用户的 `pgrep` 检查它仍存活且没有同一 fixture 的重复进程：
 
-在 sleep 仍运行时记录其 PID、启动时间和 `ps` 行数，然后仅重启 Runner：
+```bash
+SUCCESS_ID=$(jq -r '.data.commandUuid' "$ROOT/config/success-response.json")
+FAILURE_ID=$(jq -r '.data.commandUuid' "$ROOT/config/failure-response.json")
+SLEEP_ID=$(jq -r '.data.commandUuid' "$ROOT/config/sleep-response.json")
+for ID in "$SUCCESS_ID" "$FAILURE_ID" "$SLEEP_ID"; do
+  [[ "$ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+  jq '{commandId,pid,processStartedAt,executable,argumentsSha256,status,exitCode,stdoutPath,stderrPath}' "$ROOT/.gputrain/state/$ID.json"
+done
+jq -e '.status == "SUCCEEDED" and .exitCode == 0' "$ROOT/.gputrain/state/$SUCCESS_ID.json" >/dev/null
+jq -e '.status == "FAILED" and .exitCode == 17' "$ROOT/.gputrain/state/$FAILURE_ID.json" >/dev/null
+jq -e '.status == "RUNNING"' "$ROOT/.gputrain/state/$SLEEP_ID.json" >/dev/null
+rg -x 'fixture success' "$(jq -r '.stdoutPath' "$ROOT/.gputrain/state/$SUCCESS_ID.json")"
+rg -x 'fixture failure' "$(jq -r '.stderrPath' "$ROOT/.gputrain/state/$FAILURE_ID.json")"
+SLEEP_PID=$(jq -r '.pid' "$ROOT/.gputrain/state/$SLEEP_ID.json")
+[[ "$SLEEP_PID" =~ ^[0-9]+$ ]]
+ps -p "$SLEEP_PID" -o pid=,lstart=,args=
+MATCHING_PID=$(pgrep -u hanw -f 'com\.ruoyi\.train\.runner\.fixture\.FixtureMain --mode sleep --seconds 300')
+test "$MATCHING_PID" = "$SLEEP_PID"
+```
+
+记录 sleep 的 PID、状态文件 `processStartedAt`、`ps` 结果和 `pgrep` 计数，然后仅重启 Runner：
 
 ```bash
 systemctl --user restart gputrain-runner.service
 systemctl --user is-active gputrain-runner.service
+test "$(pgrep -u hanw -f 'com\.ruoyi\.train\.runner\.fixture\.FixtureMain --mode sleep --seconds 300')" = "$SLEEP_PID"
 find "$ROOT/.gputrain/state" -maxdepth 1 -type f -name '*.json' -print
 ```
 
-再次查询该 sleep 命令：PID、启动时间不变，仍只有一个匹配进程；状态保持 `RUNNING`。然后请求停止并重复一次，确认两个返回的停止命令 UUID 一致，原命令与进程最终均为 `STOPPED`：
+重启后才从 `train_runner_process` 查询该 sleep 命令。等待对账完成，验证进程行出现、PID 与启动时间和重启前的本地状态一致，仍只有一个匹配进程，命令和进程状态均为 `RUNNING`：
+
+```bash
+mysql --database=gputrain --batch --execute="SELECT c.command_uuid, c.status AS command_status, p.pid, p.process_started_at, p.status AS process_status, p.exit_code FROM train_runner_command c LEFT JOIN train_runner_process p ON p.command_id=c.command_id WHERE c.runner_id=$RUNNER_ID AND c.command_uuid='$SLEEP_ID';"
+```
+
+然后请求停止并重复一次，确认两个返回的停止命令 UUID 一致，原命令与进程最终均为 `STOPPED`：
 
 ```bash
 SLEEP_ID=$(jq -r '.data.commandUuid' "$ROOT/config/sleep-response.json")
@@ -148,10 +176,89 @@ for TRY in 1 2; do
   jq -e '.code == 200' "$ROOT/config/stop-$TRY-response.json" >/dev/null
   jq -r '.data.commandUuid' "$ROOT/config/stop-$TRY-response.json"
 done
+STOP_ID_1=$(jq -r '.data.commandUuid' "$ROOT/config/stop-1-response.json")
+STOP_ID_2=$(jq -r '.data.commandUuid' "$ROOT/config/stop-2-response.json")
+test "$STOP_ID_1" = "$STOP_ID_2"
+```
+
+等待 Runner 处理 STOP 后，在控制面终端重复以下只读查询，直至原 START 命令与进程行均为 `STOPPED`；再回目标机检查原 PID 已退出：
+
+```bash
+mysql --database=gputrain --batch --execute="SELECT c.command_uuid, c.status AS command_status, p.status AS process_status FROM train_runner_command c LEFT JOIN train_runner_process p ON p.command_id=c.command_id WHERE c.runner_id=$RUNNER_ID AND c.command_uuid='$SLEEP_ID';"
+```
+
+```bash
+if kill -0 "$SLEEP_PID" 2>/dev/null; then printf 'Sleep PID is still present; stop acceptance failed\n' >&2; exit 1; fi
 find "$ROOT" -xdev -type f -print
 ```
 
 `find` 的列表用于检查本次部署及执行创建的文件均在允许根目录；安装在 `~/.config/systemd/user/` 的 unit 是明确的用户级服务配置例外。要证明“根目录外无新增文件”，还需由操作者对目标机已知的相关目录做部署前后清单对比；仅一次 `find` 不足以证明。检查完毕后可移除 `config/` 中的一次性注册请求、响应和管理员认证头，保留 `runner.properties` 与 `runner.secret`；删除前确认无后续验收需要这些文件。
+
+## 生命周期与安全停机
+
+`KillMode=process` 是重启恢复测试的必要条件，但 `systemctl --user stop` 也只结束 Runner，不会结束它启动的 fixture。Runner 退出时内存超时计时器消失；重启恢复进程后当前实现**不会重建该计时器**。因此不要把 `timeoutSeconds` 当作跨重启的强制停止保证。验收结束或正式停机时，先通过控制面对所有 `RUNNING` 的 `START_PROCESS` 命令逐一请求 STOP，确认每条命令的最终状态、对应 PID 已退出，再停止及禁用 unit。不要直接停止仍有子进程的 unit，也不要使用 `pkill java`。
+
+控制面可用时，先查询全部仍运行的 START 命令并对每个 UUID 调用前述 `POST /train/runners/{runnerId}/commands/{id}/stop`。以下只读检查在控制面终端执行，返回计数为 0 且目标机逐个 PID 均已退出，才可在目标机执行后两条命令：
+
+```bash
+mysql --database=gputrain --batch --execute="SELECT command_uuid, status FROM train_runner_command WHERE runner_id=$RUNNER_ID AND command_type='START_PROCESS' AND status='RUNNING';"
+mysql --database=gputrain --batch --skip-column-names --execute="SELECT COUNT(*) FROM train_runner_command WHERE runner_id=$RUNNER_ID AND command_type='START_PROCESS' AND status='RUNNING';"
+```
+
+```bash
+systemctl --user stop gputrain-runner.service
+systemctl --user disable gputrain-runner.service
+```
+
+如果控制面不可用且必须紧急停机，先保留 Runner 运行状态，针对 `$ROOT/.gputrain/state/` 中每个 `RUNNING` 条目由 `hanw` 核对 `commandId`、PID、`processStartedAt`、可执行文件、工作目录和参数摘要；任何一项不符、缺失或无法读取时立即停止人工处置，保留现场等待控制面恢复。以下仅对指定状态文件执行身份校验，全部匹配后用 pidfd 向该进程发送 TERM；它不按进程名批量杀进程，不自动升级为 KILL。需 Python 3.9+ 和 Linux pidfd 支持，缺少时会拒绝执行：
+
+```bash
+STATE_FILE="$ROOT/.gputrain/state/$SLEEP_ID.json"
+python3 - "$ROOT" "$STATE_FILE" <<'PY'
+import datetime, hashlib, json, os, pathlib, select, signal, struct, sys
+root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+state_file = pathlib.Path(sys.argv[2])
+if state_file.parent.resolve(strict=True) != root / '.gputrain/state':
+    raise SystemExit('State file is outside the allowed root')
+state = json.loads(state_file.read_text())
+if state_file.name != state['commandId'] + '.json' or state['status'] != 'RUNNING':
+    raise SystemExit('State identity or status does not match')
+pid = state['pid']
+if not isinstance(pid, int) or pid <= 0:
+    raise SystemExit('Invalid PID')
+fd = os.pidfd_open(pid)
+proc = pathlib.Path('/proc') / str(pid)
+if pathlib.Path(os.readlink(proc / 'exe')).resolve(strict=True) != pathlib.Path(state['executable']).resolve(strict=True):
+    raise SystemExit('Executable mismatch')
+if pathlib.Path(os.readlink(proc / 'cwd')).resolve(strict=True) != pathlib.Path(state['workingDirectory']).resolve(strict=True):
+    raise SystemExit('Working directory mismatch')
+cmdline = (proc / 'cmdline').read_bytes().split(b'\0')
+if not cmdline or cmdline[-1] != b'' or len(cmdline) < 2:
+    raise SystemExit('Command line unavailable')
+digest = hashlib.sha256()
+for arg in cmdline[1:-1]:
+    digest.update(struct.pack('>I', len(arg)))
+    digest.update(arg)
+if digest.hexdigest() != state['argumentsSha256']:
+    raise SystemExit('Arguments mismatch')
+fields = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+ticks = int(fields[19])
+boot = next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines() if line.startswith('btime '))
+hz = os.sysconf('SC_CLK_TCK')
+observed = boot + ticks / hz
+saved = datetime.datetime.fromisoformat(state['processStartedAt'].replace('Z', '+00:00')).timestamp()
+if abs(observed - saved) > 1 / hz:
+    raise SystemExit('Process start time mismatch')
+signal.pidfd_send_signal(fd, signal.SIGTERM, None, 0)
+poller = select.poll()
+poller.register(fd, select.POLLIN)
+if not poller.poll(5000):
+    raise SystemExit('Process did not exit after TERM; do not stop the unit yet')
+print('Verified fixture process exited:', pid)
+PY
+```
+
+对所有本地 `RUNNING` 状态文件分别核验并确认无活进程后，可停止 unit 以隔离 Runner；控制面恢复后仍需完成对账并核对最终状态。人工 TERM 不能替代 API 的幂等 STOP 验收，也不能被记为阶段二通过。若无法核对身份或某个进程未退出，不执行 `systemctl stop/disable`，请求熟悉该主机的操作者介入。
 
 ## 待填写的远程证据
 

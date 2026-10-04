@@ -86,6 +86,8 @@ mvn -f backend/pom.xml clean package
 
 `deploy/runner/gputrain-runner.service` 使用 `systemd --user`，路径固定为 `/data/hanw/hw_code/gputrain-test`，并以 `KillMode=process` 保留运行中的 fixture 供重启对账。完整的无秘密打包、人工安装和 Linux 验收命令见 `docs/verification/phase-2-runner.md`；本机打包不能代替目标机验收。
 
+停机限制：`KillMode=process` 也会在停止 service 时留下它启动的进程；Runner 重启后当前实现不会恢复进程超时计时器。停机前必须先通过控制面 STOP 所有运行命令并核对 PID 已退出，再执行 `systemctl --user stop/disable`。控制面故障时只按本地状态文件记录的 PID、启动时间、可执行文件、工作目录和参数摘要逐一核验并处置；不能用 `pkill java`。具体的拒绝式人工流程见阶段二验收文档。
+
 ## 启动前端
 
 ```bash
