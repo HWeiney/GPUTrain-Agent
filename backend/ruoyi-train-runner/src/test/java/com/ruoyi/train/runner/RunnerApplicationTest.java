@@ -94,6 +94,91 @@ class RunnerApplicationTest
         finally { child.destroyForcibly(); child.waitFor(); server.stop(0); }
     }
 
+    @Test void unknownRecoveredStopReportsFailure() throws Exception
+    {
+        ManagedProcess saved = new ManagedProcess(UUID.randomUUID(), "missing", Long.MAX_VALUE,
+                Instant.parse("2026-01-01T00:00:00Z"), root.toString(), ProcessSupervisorTest.java(),
+                "digest", root.resolve("out").toString(), root.resolve("err").toString(),
+                RunnerProcessStatus.RUNNING, null, 1);
+        List<RunnerCommandReport> reports = runRecoveredStop(saved);
+        assertStopReports(reports, RunnerCommandStatus.FAILED, RunnerErrorCode.COMMAND_STATUS_CONFLICT);
+    }
+
+    @Test void identityMismatchRecoveredStopReportsFailureWithoutDestroyingChild() throws Exception
+    {
+        Process child = sleepingChild();
+        try
+        {
+            ManagedProcess saved = new ManagedProcess(UUID.randomUUID(), "mismatched", child.pid(),
+                    child.info().startInstant().orElseThrow().plusSeconds(30), root.toString(),
+                    Path.of(ProcessSupervisorTest.java()).toRealPath().toString(),
+                    ProcessSupervisor.argumentsSha256(ProcessSupervisorTest.args("--mode", "sleep", "--seconds", "30")),
+                    root.resolve("out").toString(), root.resolve("err").toString(),
+                    RunnerProcessStatus.RUNNING, null, 1);
+            List<RunnerCommandReport> reports = runRecoveredStop(saved);
+            assertStopReports(reports, RunnerCommandStatus.FAILED, RunnerErrorCode.PROCESS_IDENTITY_MISMATCH);
+            assertTrue(child.isAlive());
+        }
+        finally { child.destroyForcibly(); child.waitFor(); }
+    }
+
+    @Test void alreadyStoppedRecoveredProcessReportsIdempotentSuccess() throws Exception
+    {
+        ManagedProcess saved = new ManagedProcess(UUID.randomUUID(), "stopped", Long.MAX_VALUE,
+                Instant.parse("2026-01-01T00:00:00Z"), root.toString(), ProcessSupervisorTest.java(),
+                "digest", root.resolve("out").toString(), root.resolve("err").toString(),
+                RunnerProcessStatus.STOPPED, null, 1);
+        assertStopReports(runRecoveredStop(saved), RunnerCommandStatus.SUCCEEDED, null);
+    }
+
+    private List<RunnerCommandReport> runRecoveredStop(ManagedProcess saved) throws Exception
+    {
+        new ProcessStateStore(root).save(saved);
+        UUID stopId = UUID.randomUUID();
+        RunnerCommandLease lease = new RunnerCommandLease(stopId, RunnerCommandType.STOP_PROCESS, null,
+                saved.commandId(), Instant.now().plusSeconds(30), 1);
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        List<RunnerCommandReport> reports = new CopyOnWriteArrayList<>();
+        AtomicInteger polls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        allowReconcile(server);
+        server.createContext("/runner-api/v1/heartbeat", exchange -> {
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.createContext("/runner-api/v1/commands/poll", exchange -> {
+            if (polls.getAndIncrement() == 0)
+            {
+                byte[] body = json.writeValueAsBytes(lease);
+                exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+            }
+            else reject(exchange, "RUNNER_AUTH_INVALID");
+        });
+        server.createContext("/runner-api/v1/commands/" + stopId + "/reports", exchange -> {
+            reports.add(json.readValue(exchange.getRequestBody(), RunnerCommandReport.class));
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        server.start();
+        try (RunnerApplication app = application(server))
+        {
+            assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,
+                    assertThrows(RunnerProtocolException.class, app::run).code());
+            return List.copyOf(reports);
+        }
+        finally { server.stop(0); }
+    }
+
+    private static void assertStopReports(List<RunnerCommandReport> reports,
+            RunnerCommandStatus expected, RunnerErrorCode error)
+    {
+        assertEquals(2, reports.size());
+        assertEquals(RunnerCommandStatus.LEASED, reports.get(0).previousStatus());
+        assertEquals(RunnerCommandStatus.RUNNING, reports.get(0).status());
+        assertNull(reports.get(0).errorCode());
+        assertEquals(RunnerCommandStatus.RUNNING, reports.get(1).previousStatus());
+        assertEquals(expected, reports.get(1).status());
+        assertEquals(error, reports.get(1).errorCode());
+    }
+
     @Test void observesRecoveredChildExitAfterStartupAndReconcilesUnknown() throws Exception
     {
         Process child = sleepingChild();

@@ -45,8 +45,9 @@ class ProcessRecoveryTest
             {
                 ManagedProcess saved = saved(RunnerProcessStatus.RUNNING);
                 assertEquals(RunnerErrorCode.PROCESS_IDENTITY_MISMATCH, supervisor.recover(saved).errorCode());
-                assertEquals(RunnerErrorCode.PROCESS_IDENTITY_MISMATCH,
-                        assertThrows(ProcessPolicyException.class, () -> supervisor.stop(saved.commandId())).code());
+                RunnerProcessSnapshot stopped = supervisor.stop(saved.commandId());
+                assertEquals(RunnerProcessStatus.IDENTITY_MISMATCH, stopped.status());
+                assertEquals(RunnerErrorCode.PROCESS_IDENTITY_MISMATCH, stopped.errorCode());
                 assertEquals(0, destroys.get());
             }
         }

@@ -185,7 +185,8 @@ public final class ProcessSupervisor implements AutoCloseable
     private RunnerProcessSnapshot stopRecovered(ManagedProcess saved) throws IOException, InterruptedException
     {
         ProcessRecovery state = recover(saved);
-        if (terminal(state.status()) || state.status() == RunnerProcessStatus.UNKNOWN)
+        if (terminal(state.status()) || state.status() == RunnerProcessStatus.UNKNOWN
+                || state.status() == RunnerProcessStatus.IDENTITY_MISMATCH)
             return recoveredSnapshot(saved, state);
         ProcessLookup.View current = matchingLive(saved);
         current.destroy().getAsBoolean();

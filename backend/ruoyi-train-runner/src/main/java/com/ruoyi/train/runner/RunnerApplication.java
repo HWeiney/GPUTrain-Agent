@@ -174,12 +174,25 @@ public final class RunnerApplication implements AutoCloseable
             {
                 RunnerProcessSnapshot snapshot = supervisor.stop(lease.targetCommandId());
                 queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.RUNNING, snapshot, null);
-                queue(lease, RunnerCommandStatus.RUNNING,
-                    snapshot.status() == RunnerProcessStatus.RUNNING ? RunnerCommandStatus.FAILED : RunnerCommandStatus.SUCCEEDED, snapshot, null);
+                switch (snapshot.status())
+                {
+                    case STOPPED, SUCCEEDED, FAILED -> queue(lease, RunnerCommandStatus.RUNNING,
+                            RunnerCommandStatus.SUCCEEDED, snapshot, null);
+                    case IDENTITY_MISMATCH -> queue(lease, RunnerCommandStatus.RUNNING,
+                            RunnerCommandStatus.FAILED, snapshot, RunnerErrorCode.PROCESS_IDENTITY_MISMATCH);
+                    case UNKNOWN, RUNNING -> queue(lease, RunnerCommandStatus.RUNNING,
+                            RunnerCommandStatus.FAILED, snapshot, RunnerErrorCode.COMMAND_STATUS_CONFLICT);
+                }
             }
         }
         catch (ProcessPolicyException failure)
         {
+            if (lease.type() == RunnerCommandType.STOP_PROCESS
+                    && failure.code() == RunnerErrorCode.PROCESS_IDENTITY_MISMATCH)
+            {
+                queue(lease, RunnerCommandStatus.LEASED, RunnerCommandStatus.REJECTED, null, failure.code());
+                return;
+            }
             if (failure.code() == RunnerErrorCode.COMMAND_LEASE_EXPIRED
                     || failure.code() == RunnerErrorCode.PROCESS_IDENTITY_MISMATCH
                     || failure.code() == RunnerErrorCode.COMMAND_STATUS_CONFLICT)
