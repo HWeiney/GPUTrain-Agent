@@ -24,7 +24,8 @@ public final class JobStateMachine
             case ALLOCATING -> EnumSet.of(JobStatus.ALLOCATED, JobStatus.QUEUED, JobStatus.FAILED,
                     JobStatus.QUARANTINED);
             case ALLOCATED -> EnumSet.of(JobStatus.STARTING, JobStatus.FAILED, JobStatus.QUARANTINED);
-            case STARTING -> EnumSet.of(JobStatus.RUNNING, JobStatus.FAILED, JobStatus.QUARANTINED);
+            case STARTING -> EnumSet.of(JobStatus.RUNNING, JobStatus.SUCCEEDED,
+                    JobStatus.FAILED, JobStatus.STOPPED, JobStatus.QUARANTINED);
             case RUNNING -> EnumSet.of(JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.STOPPING,
                     JobStatus.QUARANTINED);
             case STOPPING -> EnumSet.of(JobStatus.STOPPED, JobStatus.FAILED, JobStatus.RUNNING,

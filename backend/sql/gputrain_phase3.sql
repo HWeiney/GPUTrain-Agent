@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS train_job (
     min_memory_mib BIGINT NOT NULL,
     allowed_gpu_uuids JSON NULL,
     denied_gpu_uuids JSON NULL,
+    process_spec_json JSON NULL,
     status VARCHAR(64) NOT NULL,
     request_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     start_command_id BIGINT NULL,
@@ -104,6 +105,20 @@ CREATE TABLE IF NOT EXISTS train_gpu_audit (
     KEY idx_audit_runner (runner_id),
     KEY idx_audit_occurred (occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Idempotent migration: add process_spec_json to deployments that applied an earlier revision.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE train_job ADD COLUMN process_spec_json JSON NULL AFTER denied_gpu_uuids',
+        'SELECT 1')
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'train_job'
+      AND COLUMN_NAME = 'process_spec_json'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Phase-three permissions under the existing GPUTrain directory.
 INSERT INTO sys_menu

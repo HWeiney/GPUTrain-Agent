@@ -68,6 +68,11 @@ public class GpuLeaseService
         return leases;
     }
 
+    public List<GpuLeaseRecord> findActiveByJob(long jobId)
+    {
+        return leaseMapper.findActiveByJob(jobId);
+    }
+
     @Transactional
     public void renew(long leaseId, long jobId, Instant now)
     {

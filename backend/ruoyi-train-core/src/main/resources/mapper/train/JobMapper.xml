@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.job.mapper.JobMapper">
+    <resultMap id="JobResult" type="com.ruoyi.train.core.job.domain.JobRecord">
+        <constructor>
+            <idArg column="job_id" javaType="java.lang.Long"/>
+            <arg column="job_uuid" javaType="java.lang.String"/>
+            <arg column="owner_user_id" javaType="java.lang.Long"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="gpu_count" javaType="int"/>
+            <arg column="min_memory_mib" javaType="_long"/>
+            <arg column="allowed_gpu_uuids" javaType="java.lang.String"/>
+            <arg column="denied_gpu_uuids" javaType="java.lang.String"/>
+            <arg column="process_spec_json" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="request_key" javaType="java.lang.String"/>
+            <arg column="start_command_id" javaType="java.lang.Long"/>
+            <arg column="stop_command_id" javaType="java.lang.Long"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.job.domain.JobRecord">
+        INSERT INTO train_job
+            (job_uuid, owner_user_id, runner_id, gpu_count, min_memory_mib,
+             allowed_gpu_uuids, denied_gpu_uuids, process_spec_json, status,
+             request_key, start_command_id, stop_command_id, created_at, updated_at)
+        VALUES
+            (#{jobUuid}, #{ownerUserId}, #{runnerId}, #{gpuCount}, #{minMemoryMiB},
+             CAST(#{allowedGpuUuidsJson} AS JSON), CAST(#{deniedGpuUuidsJson} AS JSON),
+             CAST(#{processSpecJson} AS JSON), #{status}, #{requestKey},
+             #{startCommandId}, #{stopCommandId}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findById" resultMap="JobResult">
+        SELECT * FROM train_job WHERE job_id = #{jobId}
+    </select>
+
+    <select id="findByRequestKey" resultMap="JobResult">
+        SELECT * FROM train_job WHERE request_key = #{requestKey}
+    </select>
+
+    <update id="compareAndSetStatus">
+        UPDATE train_job
+        SET status = #{newStatus}, updated_at = #{updatedAt}
+        WHERE job_id = #{jobId} AND status = #{expectedStatus}
+    </update>
+
+    <update id="attachStartCommand">
+        UPDATE train_job
+        SET runner_id = #{runnerId}, start_command_id = #{startCommandId},
+            status = 'STARTING', updated_at = #{updatedAt}
+        WHERE job_id = #{jobId}
+    </update>
+
+    <update id="attachStopCommand">
+        UPDATE train_job
+        SET stop_command_id = #{stopCommandId}, updated_at = #{updatedAt}
+        WHERE job_id = #{jobId}
+    </update>
+</mapper>
