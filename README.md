@@ -2,13 +2,13 @@
 
 面向一台由团队共享的多 GPU 服务器的训练实验管理与智能诊断平台。控制面基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript；训练任务计划由每个 Linux 账户下的原生 Runner 执行，以保留用户文件权限、Conda 环境和 CUDA 工具链。
 
-阶段一工程基础和阶段二 Runner 代码已实现。阶段二的远程 Linux 验收尚待在 `hanw` 用户的目标机执行；GPU 调度、真实训练任务、日志监控、Qwen Agent 与 MCP 仍属于后续阶段。
+阶段一工程基础、阶段二用户级 Runner 与阶段三 GPU 调度（GPU 发现、原子租约、任务状态机）代码已实现。阶段二已在 Linux 目标机完成 fixture 级验收；阶段三的后端与确定性测试已在本地完成，真实 GPU 验收需在带 NVIDIA GPU 的目标机执行。日志/SSE/指标告警、Qwen Agent 与 MCP 仍属于后续阶段。
 
 ## 模块
 
 | 模块 | 当前职责 |
 |---|---|
-| `ruoyi-train-core` | 总览、Runner 注册与认证、命令租约、状态上报和对账 |
+| `ruoyi-train-core` | 总览、Runner 注册与认证、命令租约、状态上报、GPU 目录/原子租约/任务状态机 |
 | `ruoyi-train-runner-protocol` | 不依赖 Spring 的 Runner 协议与 HMAC 签名 |
 | `ruoyi-train-runner` | 独立 Java 17 可执行包，安全执行 fixture 并恢复本地进程状态 |
 | `ruoyi-train-monitor` | 监控边界，阶段一仅建立模块 |
@@ -88,6 +88,14 @@ mvn -f backend/pom.xml clean package
 
 停机限制：`KillMode=process` 也会在停止 service 时留下它启动的进程；Runner 重启后当前实现不会恢复进程超时计时器。停机前必须先通过控制面 STOP 所有运行命令并核对 PID 已退出，再执行 `systemctl --user stop/disable`。控制面故障时只按本地状态文件记录的 PID、启动时间、可执行文件、工作目录和参数摘要逐一核验并处置；不能用 `pkill java`。具体的拒绝式人工流程见阶段二验收文档。
 
+## GPU 调度（阶段三）
+
+Runner 通过固定参数数组（不使用 Shell）调用 `nvidia-smi`，周期上报其用户可见的 GPU 快照；控制面用 GPU UUID（而非易变的 ordinal）作为持久身份，校验快照的范围、数量与新鲜度，并保守处理外部进程与身份冲突。
+
+任务提交后，控制面在单个数据库事务内原子分配满足约束的 GPU：生成列唯一约束 `uk_active_gpu` 保证同一 GPU 任一时刻最多一个 ACTIVE 租约；多卡请求要么全得、要么整事务回滚。任务、命令、租约与进程通过 `job_id` 稳定关联，任务状态机（PENDING/QUEUED/ALLOCATING/ALLOCATED/STARTING/RUNNING/SUCCEEDED/FAILED/STOPPING/STOPPED/QUARANTINED/CANCELED）驱动开始、成功、失败、停止与恢复。
+
+关键安全规则：外部进程占用、MIG 开启（阶段三不支持 MIG）、快照过期、Runner 离线或身份不确定时一律 fail closed；过期租约不自动等于空闲，必须重新探测并核对进程，否则进入隔离。本地开发机无 NVIDIA GPU，真实 GPU 验收步骤见 `docs/verification/phase-3-gpu-scheduling.md`。
+
 ## 启动前端
 
 ```bash
@@ -101,12 +109,13 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 
 ```bash
 mvn -f backend/pom.xml clean test
+mvn -f backend/pom.xml -pl ruoyi-train-core test -Pmysql-it
 npm --prefix frontend test
 npm --prefix frontend run build:prod
-docker compose --env-file .env -f deploy/compose.yaml config -q
+docker compose --env-file .env.example -f deploy/compose.yaml config -q
 git diff --check
 ```
 
 管理员可以看到 `GPUTrain / 训练工作台` 并访问 `GET /train/overview`；未授权用户既看不到菜单，直接请求接口也会被拒绝。
 
-完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。阶段二本地证据与远程待验项目见 `docs/verification/phase-2-runner.md`。
+完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。阶段二本地证据与远程待验项目见 `docs/verification/phase-2-runner.md`。阶段三验收证据与真实 GPU 待验步骤见 `docs/verification/phase-3-gpu-scheduling.md`。
