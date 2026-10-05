@@ -1,6 +1,7 @@
 package com.ruoyi.train.core.job.mapper;
 
 import java.time.Instant;
+import java.util.List;
 import org.apache.ibatis.annotations.Param;
 import com.ruoyi.train.core.job.domain.JobRecord;
 
@@ -15,6 +16,10 @@ public interface JobMapper
     JobRecord findById(@Param("jobId") long jobId);
 
     JobRecord findByRequestKey(@Param("requestKey") String requestKey);
+
+    /** Lists jobs for the data scope; admins see all, others only their own jobs. */
+    List<JobRecord> listByOwner(@Param("ownerUserId") Long ownerUserId,
+            @Param("isAdmin") boolean isAdmin);
 
     /**
      * Change the job status only when the current status matches {@code expectedStatus},

@@ -49,6 +49,14 @@ public class JobAdminController
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:view')")
+    @GetMapping
+    public AjaxResult list()
+    {
+        long userId = SecurityUtils.getUserId();
+        return AjaxResult.success(jobService.list(userId, SecurityUtils.isAdmin(userId)));
+    }
+
+    @PreAuthorize("@ss.hasPermi('train:job:view')")
     @GetMapping("/{jobId}")
     public AjaxResult get(@PathVariable long jobId)
     {

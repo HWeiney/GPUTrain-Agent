@@ -44,4 +44,42 @@
             <foreach collection="visibleUuids" item="uuid" open="(" separator="," close=")">#{uuid}</foreach>
         </if>
     </update>
+
+    <resultMap id="DeviceViewResult" type="com.ruoyi.train.core.gpu.domain.GpuDeviceView">
+        <constructor>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="host_signature" javaType="java.lang.String"/>
+            <arg column="identity_state" javaType="java.lang.String"/>
+            <arg column="schedulable" javaType="_boolean"/>
+            <arg column="sampled_at" javaType="java.time.Instant"/>
+            <arg column="total_memory_mib" javaType="_long"/>
+            <arg column="used_memory_mib" javaType="_long"/>
+            <arg column="utilization_percent" javaType="int"/>
+            <arg column="mig_mode" javaType="java.lang.String"/>
+            <arg column="has_active_lease" javaType="_boolean"/>
+            <arg column="external_process_count" javaType="int"/>
+        </constructor>
+    </resultMap>
+
+    <select id="listDevices" resultMap="DeviceViewResult">
+        SELECT
+            d.gpu_uuid, d.name, d.host_signature, d.identity_state, d.schedulable,
+            s.sampled_at, s.total_memory_mib, s.used_memory_mib,
+            s.utilization_percent, s.mig_mode,
+            EXISTS (SELECT 1 FROM train_gpu_lease l
+                    WHERE l.gpu_uuid = d.gpu_uuid AND l.status = 'ACTIVE') AS has_active_lease,
+            COALESCE(JSON_LENGTH(s.compute_processes), 0) AS external_process_count
+        FROM train_gpu_device d
+        LEFT JOIN (
+            SELECT t.gpu_uuid, t.sampled_at, t.total_memory_mib, t.used_memory_mib,
+                   t.utilization_percent, t.mig_mode, t.compute_processes
+            FROM train_gpu_snapshot t
+            JOIN (
+                SELECT gpu_uuid, MAX(sampled_at) AS m
+                FROM train_gpu_snapshot GROUP BY gpu_uuid
+            ) latest ON latest.gpu_uuid = t.gpu_uuid AND latest.m = t.sampled_at
+        ) s ON s.gpu_uuid = d.gpu_uuid
+        ORDER BY d.host_signature, d.gpu_uuid
+    </select>
 </mapper>

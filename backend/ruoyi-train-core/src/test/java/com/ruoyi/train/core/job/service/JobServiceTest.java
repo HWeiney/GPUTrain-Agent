@@ -186,6 +186,14 @@ class JobServiceTest
         }
 
         @Override
+        public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin)
+        {
+            return store.values().stream()
+                    .filter(j -> isAdmin || j.ownerUserId().equals(ownerUserId))
+                    .toList();
+        }
+
+        @Override
         public int compareAndSetStatus(long jobId, String expected, String next, Instant updatedAt)
         {
             JobRecord current = store.get(jobId);

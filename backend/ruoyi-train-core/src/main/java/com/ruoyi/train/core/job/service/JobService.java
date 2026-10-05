@@ -127,6 +127,11 @@ public class JobService
      * its device is safe. Active leases are deliberately not released, so the GPU cannot
      * be handed to another job until the situation is re-probed.
      */
+    public List<JobRecord> list(long userId, boolean isAdmin)
+    {
+        return jobMapper.listByOwner(userId, isAdmin);
+    }
+
     /**
      * Load a job and enforce ownership. A non-admin user cannot access another user's
      * job, so the control plane never leaks another user's task or lets it be stopped.

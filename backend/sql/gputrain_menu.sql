@@ -26,12 +26,36 @@ WHERE parent.menu_name = 'GPUTrain'
       WHERE child.menu_name = '训练工作台' AND child.parent_id = parent.menu_id
   );
 
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, query, route_name, is_frame, is_cache,
+     menu_type, visible, status, perms, icon, create_by, create_time, remark)
+SELECT
+    m.menu_name, parent.menu_id, m.order_num, m.path, m.component, '', '', 1, 0,
+    'C', '0', '0', m.perms, 'server', 'admin', NOW(), m.remark
+FROM sys_menu parent
+CROSS JOIN (
+    SELECT 'GPU 设备' AS menu_name, 2 AS order_num, 'devices' AS path,
+           'train/devices/index' AS component, 'train:gpu:view' AS perms,
+           'GPU 设备与外部占用' AS remark
+    UNION ALL
+    SELECT '训练任务', 3, 'jobs', 'train/jobs/index', 'train:job:view',
+           '训练任务与状态机'
+) m
+WHERE parent.menu_name = 'GPUTrain'
+  AND parent.parent_id = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM sys_menu child
+      WHERE child.perms = m.perms AND child.parent_id = parent.menu_id
+        AND child.menu_type = 'C'
+  );
+
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1, menu.menu_id
 FROM sys_menu menu
 WHERE (
         (menu.menu_name = 'GPUTrain' AND menu.parent_id = 0)
         OR menu.perms = 'train:overview:view'
+        OR menu.perms IN ('train:gpu:view', 'train:job:view')
       )
   AND NOT EXISTS (
       SELECT 1 FROM sys_role_menu role_menu

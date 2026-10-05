@@ -41,6 +41,16 @@
         SELECT * FROM train_job WHERE request_key = #{requestKey}
     </select>
 
+    <select id="listByOwner" resultMap="JobResult">
+        SELECT * FROM train_job
+        <where>
+            <if test="!isAdmin">
+                owner_user_id = #{ownerUserId}
+            </if>
+        </where>
+        ORDER BY created_at DESC
+    </select>
+
     <update id="compareAndSetStatus">
         UPDATE train_job
         SET status = #{newStatus}, updated_at = #{updatedAt}
