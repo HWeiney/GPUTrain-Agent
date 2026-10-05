@@ -48,5 +48,48 @@
             <artifactId>spring-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <profiles>
+        <!--
+            Database integration tests against a real MySQL. Enable with:
+              mvn -f backend/pom.xml -pl ruoyi-train-core test -Pmysql-it
+            Defaults to the compose MySQL at 127.0.0.1:3307/gputrain. Override with
+            -Dmysql.it.url=... -Dmysql.it.user=... -Dmysql.it.password=...
+            Tests skip gracefully when no database is reachable.
+        -->
+        <profile>
+            <id>mysql-it</id>
+            <properties>
+                <mysql.it.url>jdbc:mysql://127.0.0.1:3307/gputrain?useSSL=false&amp;allowPublicKeyRetrieval=true&amp;characterEncoding=utf8</mysql.it.url>
+                <mysql.it.user>root</mysql.it.user>
+                <mysql.it.password>gputrain-root-local-only</mysql.it.password>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <mysql.it>true</mysql.it>
+                                <mysql.it.url>${mysql.it.url}</mysql.it.url>
+                                <mysql.it.user>${mysql.it.user}</mysql.it.user>
+                                <mysql.it.password>${mysql.it.password}</mysql.it.password>
+                                <!-- The host Clash SOCKS/HTTP proxy must not touch the local compose DB. -->
+                                <socksProxyHost></socksProxyHost>
+                                <http.proxyHost></http.proxyHost>
+                                <https.proxyHost></https.proxyHost>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

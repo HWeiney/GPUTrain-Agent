@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.gpu.mapper.GpuLeaseMapper">
+    <resultMap id="LeaseResult" type="com.ruoyi.train.core.gpu.domain.GpuLeaseRecord">
+        <constructor>
+            <idArg column="lease_id" javaType="java.lang.Long"/>
+            <arg column="lease_uuid" javaType="java.lang.String"/>
+            <arg column="job_id" javaType="java.lang.Long"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="acquired_at" javaType="java.time.Instant"/>
+            <arg column="expires_at" javaType="java.time.Instant"/>
+            <arg column="renewed_at" javaType="java.time.Instant"/>
+            <arg column="released_at" javaType="java.time.Instant"/>
+            <arg column="attempt" javaType="int"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="CandidateResult" type="com.ruoyi.train.core.gpu.service.GpuAllocationCandidate">
+        <constructor>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="host_signature" javaType="java.lang.String"/>
+            <arg column="total_memory_mib" javaType="_long"/>
+            <arg column="schedulable" javaType="_boolean"/>
+            <arg column="fresh" javaType="_boolean"/>
+            <arg column="identity_state"
+                  javaType="com.ruoyi.train.core.gpu.domain.DeviceIdentityState"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.gpu.domain.GpuLeaseRecord">
+        INSERT INTO train_gpu_lease
+            (lease_uuid, job_id, runner_id, gpu_uuid, status, idempotency_key,
+             acquired_at, expires_at, renewed_at, released_at, attempt,
+             created_at, updated_at)
+        VALUES
+            (#{leaseUuid}, #{jobId}, #{runnerId}, #{gpuUuid}, #{status}, #{idempotencyKey},
+             #{acquiredAt}, #{expiresAt}, #{renewedAt}, #{releasedAt}, #{attempt},
+             #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findByJobAndKey" resultMap="LeaseResult">
+        SELECT * FROM train_gpu_lease WHERE job_id = #{jobId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="findActiveByJob" resultMap="LeaseResult">
+        SELECT * FROM train_gpu_lease WHERE job_id = #{jobId} AND status = 'ACTIVE'
+    </select>
+
+    <select id="lockCandidates" resultMap="CandidateResult">
+        SELECT d.gpu_uuid, d.host_signature, s.total_memory_mib, d.schedulable,
+               (s.sampled_at &gt;= #{freshAfter}) AS fresh,
+               d.identity_state
+        FROM train_gpu_device d
+        JOIN (
+            SELECT t.gpu_uuid, t.total_memory_mib, t.sampled_at
+            FROM train_gpu_snapshot t
+            JOIN (
+                SELECT gpu_uuid, MAX(sampled_at) AS m
+                FROM train_gpu_snapshot GROUP BY gpu_uuid
+            ) latest ON latest.gpu_uuid = t.gpu_uuid AND latest.m = t.sampled_at
+        ) s ON s.gpu_uuid = d.gpu_uuid
+        WHERE NOT EXISTS (
+            SELECT 1 FROM train_gpu_lease l
+            WHERE l.gpu_uuid = d.gpu_uuid AND l.status = 'ACTIVE'
+        )
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <select id="findRunnerIdForGpu" resultType="_long">
+        SELECT runner_id FROM train_gpu_snapshot
+        WHERE gpu_uuid = #{gpuUuid}
+        ORDER BY sampled_at DESC
+        LIMIT 1
+    </select>
+
+    <update id="conditionalRenew">
+        UPDATE train_gpu_lease
+        SET expires_at = #{newExpiresAt}, renewed_at = #{renewedAt},
+            updated_at = #{renewedAt}
+        WHERE lease_id = #{leaseId} AND job_id = #{jobId}
+          AND status = #{expectedStatus}
+    </update>
+
+    <update id="conditionalRelease">
+        UPDATE train_gpu_lease
+        SET status = 'RELEASED', released_at = #{releasedAt},
+            updated_at = #{releasedAt}
+        WHERE lease_id = #{leaseId} AND job_id = #{jobId}
+          AND status = #{expectedStatus}
+    </update>
+
+    <update id="markExpiredQuarantined">
+        UPDATE train_gpu_lease
+        SET status = 'EXPIRED_QUARANTINED', updated_at = #{now}
+        WHERE status = 'ACTIVE' AND expires_at &lt; #{now}
+    </update>
+</mapper>
