@@ -16,13 +16,13 @@ npm --prefix frontend test
 npm --prefix frontend run build:prod
 docker compose --env-file .env.example -f deploy/compose.yaml config -q
 git diff --check
-COPYFILE_DISABLE=1 tar --no-xattrs -czf deploy/runner/build/gputrain-runner-bundle.tar.gz -C deploy/runner/build runner
+deploy/runner/build-bundle.sh
 tar -tf deploy/runner/build/gputrain-runner-bundle.tar.gz
 ```
 
 结果：在允许本地测试端口的环境中，`mvn clean test` 和随后执行的 `mvn clean package` 均退出 0，最终 JAR 存在；初次在受限沙箱中运行 Maven 时，13 个需绑定回环 HTTP 端口的测试被系统拒绝。Vitest 1/1 通过，Vite 6.4.1 转换 2642 个模块并生成生产构建；Compose 结构检查退出 0；`git diff --check` 退出 0。Compose 此处只用仓库的占位 `.env.example` 解析结构，不证明真实 `.env` 的值或服务连通性。远程 Linux 项目当前状态：**待执行**。
 
-包使用 `COPYFILE_DISABLE=1` 和 `tar --no-xattrs` 生成，避免 macOS AppleDouble 文件和扩展属性进入 Linux 部署包。内容在目标 Linux 的 GNU tar 中精确核对为上述三个文件且无元数据警告；包成员名、JAR 成员名与两个文本配置文件经过 `rg` 检查，未命中 `.env`、私钥、凭据文件、数据目录或典型明文秘密模式。该静态扫描不替代目标环境的秘密管理检查。包 SHA-256：`f6c215da7de900787a25d2713f5254ff04564bd6214bf0e02d23beb4a020f967`。
+`build-bundle.sh` 每次创建全新临时 staging，只从最终 target JAR、受版本控制的 unit 和配置样例复制三个显式文件；它使用 `COPYFILE_DISABLE=1` 和 `tar --no-xattrs`，避免 macOS AppleDouble 文件和扩展属性进入 Linux 部署包，并在退出前核对成员列表。内容在目标 Linux 的 GNU tar 中精确核对为上述三个文件且无元数据警告；包成员名、JAR 成员名与两个文本配置文件经过 `rg` 检查，未命中 `.env`、私钥、凭据文件、数据目录或典型明文秘密模式。该静态扫描不替代目标环境的秘密管理检查。包 SHA-256：`b21cfdf61361d4a99b3df2ec3138658b626e3d7cd13573e46b95f523a5770241`。
 
 ## 目标机前提
 
@@ -36,7 +36,7 @@ test -d "$ROOT"
 test "$(realpath "$ROOT")" = "$ROOT"
 test -x /usr/bin/java
 test -f "$ROOT/gputrain-runner-bundle.tar.gz"
-printf '%s  %s\n' 'f6c215da7de900787a25d2713f5254ff04564bd6214bf0e02d23beb4a020f967' "$ROOT/gputrain-runner-bundle.tar.gz" | sha256sum -c -
+printf '%s  %s\n' 'b21cfdf61361d4a99b3df2ec3138658b626e3d7cd13573e46b95f523a5770241' "$ROOT/gputrain-runner-bundle.tar.gz" | sha256sum -c -
 tar -tzf "$ROOT/gputrain-runner-bundle.tar.gz"
 tar -xzf "$ROOT/gputrain-runner-bundle.tar.gz" -C "$ROOT"
 install -d -m 700 "$ROOT/config" "$HOME/.config/systemd/user"
