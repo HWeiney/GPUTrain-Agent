@@ -10,7 +10,8 @@ import java.util.stream.Collectors;
 
 public record RunnerConfig(URI controlPlaneUrl, String runnerId, Path credentialFile,
         Path allowedRoot, Set<Path> executableAllowlist, Set<String> environmentAllowlist,
-        Duration heartbeatInterval, Duration pollingTimeout)
+        Duration heartbeatInterval, Duration pollingTimeout,
+        String nvidiaSmiPath, Duration discoveryInterval)
 {
     public RunnerConfig
     {
@@ -26,6 +27,20 @@ public record RunnerConfig(URI controlPlaneUrl, String runnerId, Path credential
         if (heartbeatInterval.isZero() || heartbeatInterval.isNegative() || pollingTimeout.isNegative()
                 || pollingTimeout.compareTo(Duration.ofSeconds(20)) > 0)
             throw new IllegalArgumentException("Invalid heartbeat or polling interval");
+        if (nvidiaSmiPath == null || nvidiaSmiPath.isBlank())
+            throw new IllegalArgumentException("nvidiaSmiPath is required");
+        if (discoveryInterval == null || discoveryInterval.isZero() || discoveryInterval.isNegative()
+                || discoveryInterval.compareTo(Duration.ofMinutes(10)) > 0)
+            throw new IllegalArgumentException("Invalid discovery interval");
+    }
+
+    public RunnerConfig(URI controlPlaneUrl, String runnerId, Path credentialFile,
+            Path allowedRoot, Set<Path> executableAllowlist, Set<String> environmentAllowlist,
+            Duration heartbeatInterval, Duration pollingTimeout)
+    {
+        this(controlPlaneUrl, runnerId, credentialFile, allowedRoot, executableAllowlist,
+                environmentAllowlist, heartbeatInterval, pollingTimeout,
+                "nvidia-smi", Duration.ofSeconds(15));
     }
 
     public static RunnerConfig load(Path path) throws IOException
@@ -42,7 +57,9 @@ public record RunnerConfig(URI controlPlaneUrl, String runnerId, Path credential
             split(required(p, "executableAllowlist")).stream().map(Path::of).collect(Collectors.toSet()),
             split(p.getProperty("environmentAllowlist", "")),
             Duration.ofSeconds(Long.parseLong(p.getProperty("heartbeatIntervalSeconds", "10"))),
-            Duration.ofSeconds(Long.parseLong(p.getProperty("pollingTimeoutSeconds", "20"))));
+            Duration.ofSeconds(Long.parseLong(p.getProperty("pollingTimeoutSeconds", "20"))),
+            p.getProperty("nvidiaSmiPath", "nvidia-smi"),
+            Duration.ofSeconds(Long.parseLong(p.getProperty("discoveryIntervalSeconds", "15"))));
     }
 
     public byte[] readSecret() throws IOException

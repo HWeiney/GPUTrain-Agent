@@ -39,6 +39,9 @@ public final class RunnerControlClient
     public void reconcile(List<RunnerProcessSnapshot> snapshots) throws IOException, InterruptedException
     { send("POST", "/runner-api/v1/processes/reconcile", snapshots, true); }
 
+    public void reportGpuSnapshot(Object gpuReport) throws IOException, InterruptedException
+    { send("POST", "/runner-api/v1/gpu-snapshots", gpuReport, true); }
+
     private byte[] send(String method, String path, Object value, boolean signed) throws IOException, InterruptedException
     {
         byte[] body = value == null ? new byte[0] : json.writeValueAsBytes(value);

@@ -2,11 +2,15 @@ package com.ruoyi.train.runner;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import com.ruoyi.train.runner.client.RunnerControlClient;
 import com.ruoyi.train.runner.config.RunnerConfig;
+import com.ruoyi.train.runner.gpu.GpuDiscovery;
+import com.ruoyi.train.runner.gpu.NvidiaSmiGpuDiscovery;
+import com.ruoyi.train.runner.gpu.ProcessBuilderCommandExecutor;
 import com.ruoyi.train.runner.process.*;
 import com.ruoyi.train.runner.protocol.*;
 
@@ -24,6 +28,8 @@ public final class RunnerApplication implements AutoCloseable
     private final Deque<PendingReport> pending = new ArrayDeque<>();
     private final Set<UUID> reconciliationRequired = new HashSet<>();
     private final ScheduledExecutorService heartbeats = Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledExecutorService discoveryScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final GpuDiscovery gpuDiscovery;
     private final RetryBackoff controlBackoff = new RetryBackoff();
     private final RetryBackoff heartbeatBackoff = new RetryBackoff();
     private final Object communicationGate = new Object();
@@ -38,6 +44,18 @@ public final class RunnerApplication implements AutoCloseable
         policy = new ProcessPolicy(config);
         stateStore = new ProcessStateStore(config.allowedRoot());
         supervisor = new ProcessSupervisor(stateStore, ProcessLookup.system());
+        gpuDiscovery = new NvidiaSmiGpuDiscovery(config.runnerId(), config.nvidiaSmiPath(),
+                Duration.ofSeconds(10), 1024 * 1024, new ProcessBuilderCommandExecutor());
+    }
+
+    RunnerApplication(RunnerConfig config, GpuDiscovery gpuDiscovery) throws IOException
+    {
+        this.config = Objects.requireNonNull(config);
+        client = new RunnerControlClient(config);
+        policy = new ProcessPolicy(config);
+        stateStore = new ProcessStateStore(config.allowedRoot());
+        supervisor = new ProcessSupervisor(stateStore, ProcessLookup.system());
+        this.gpuDiscovery = gpuDiscovery;
     }
 
     public static void main(String[] args) throws Exception
@@ -84,6 +102,7 @@ public final class RunnerApplication implements AutoCloseable
             }
         }
         scheduleHeartbeat(0);
+        scheduleDiscovery(0);
         while (!closed && !Thread.currentThread().isInterrupted())
         {
             try { tick(); controlBackoff.reset(); }
@@ -284,6 +303,33 @@ public final class RunnerApplication implements AutoCloseable
         if (terminalTransportFailure != null) throw terminalTransportFailure;
     }
 
+    private void scheduleDiscovery(long delayMillis)
+    {
+        if (closed || terminalFailure != null || terminalTransportFailure != null) return;
+        try { discoveryScheduler.schedule(this::discoverAndReport, delayMillis, TimeUnit.MILLISECONDS); }
+        catch (RejectedExecutionException stopped) { if (!closed) throw stopped; }
+    }
+
+    private void discoverAndReport()
+    {
+        long nextDelay;
+        try
+        {
+            var report = gpuDiscovery.discover();
+            if (report == null) throw new IllegalStateException("Discovery produced no report");
+            client.reportGpuSnapshot(report);
+            nextDelay = config.discoveryInterval().toMillis();
+        }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
+        catch (Exception failure)
+        {
+            // GPU reporting is secondary to the command loop: a failed report never terminates the
+            // runner. The control plane simply lacks a fresh snapshot and fails closed (no schedule).
+            nextDelay = config.discoveryInterval().toMillis();
+        }
+        scheduleDiscovery(nextDelay);
+    }
+
     private static boolean retryable(IOException failure)
     { return !(failure instanceof RunnerControlClient.HttpFailure http) || http.retryable(); }
 
@@ -294,6 +340,7 @@ public final class RunnerApplication implements AutoCloseable
     {
         closed = true;
         heartbeats.shutdownNow();
+        discoveryScheduler.shutdownNow();
         supervisor.close();
     }
     private record PendingReport(UUID commandId, RunnerCommandReport report) { }
