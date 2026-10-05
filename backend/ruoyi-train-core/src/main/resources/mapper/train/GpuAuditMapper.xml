@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.gpu.mapper.GpuAuditMapper">
+    <resultMap id="AuditResult" type="com.ruoyi.train.core.gpu.domain.GpuAuditRecord">
+        <constructor>
+            <idArg column="audit_id" javaType="java.lang.Long"/>
+            <arg column="occurred_at" javaType="java.time.Instant"/>
+            <arg column="actor_user_id" javaType="java.lang.Long"/>
+            <arg column="job_id" javaType="java.lang.Long"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="lease_id" javaType="java.lang.Long"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="decision" javaType="java.lang.String"/>
+            <arg column="reason_code" javaType="java.lang.String"/>
+            <arg column="detail" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="columns">
+        occurred_at, actor_user_id, job_id, runner_id, gpu_uuid, lease_id,
+        action, decision, reason_code, detail
+    </sql>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.gpu.domain.GpuAuditRecord">
+        INSERT INTO train_gpu_audit (<include refid="columns"/>)
+        VALUES
+            (#{occurredAt}, #{actorUserId}, #{jobId}, #{runnerId}, #{gpuUuid}, #{leaseId},
+             #{action}, #{decision}, #{reasonCode}, #{detail})
+    </insert>
+
+    <insert id="insertBatch">
+        INSERT INTO train_gpu_audit (<include refid="columns"/>)
+        VALUES
+        <foreach collection="list" item="a" separator=",">
+            (#{a.occurredAt}, #{a.actorUserId}, #{a.jobId}, #{a.runnerId}, #{a.gpuUuid}, #{a.leaseId},
+             #{a.action}, #{a.decision}, #{a.reasonCode}, #{a.detail})
+        </foreach>
+    </insert>
+</mapper>

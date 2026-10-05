@@ -33,6 +33,10 @@
         SELECT * FROM train_runner_process WHERE command_id = #{commandId}
     </select>
 
+    <select id="listRunningPids" resultType="_long">
+        SELECT pid FROM train_runner_process WHERE runner_id = #{runnerId} AND status = 'RUNNING'
+    </select>
+
     <update id="updateSnapshot">
         UPDATE train_runner_process
         SET status = #{status}, exit_code = #{exitCode}, error_code = #{errorCode},

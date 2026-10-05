@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.async.DeferredResult;
 import com.ruoyi.common.annotation.Anonymous;
+import com.ruoyi.train.core.gpu.service.GpuDeviceCatalogService;
 import com.ruoyi.train.core.runner.domain.RunnerCommandRecord;
 import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.core.runner.service.RunnerHeartbeatService;
@@ -28,6 +29,7 @@ import com.ruoyi.train.runner.protocol.RunnerCommandLease;
 import com.ruoyi.train.runner.protocol.RunnerCommandReport;
 import com.ruoyi.train.runner.protocol.RunnerHeartbeat;
 import com.ruoyi.train.runner.protocol.RunnerProcessSnapshot;
+import com.ruoyi.train.runner.protocol.gpu.GpuDiscoveryReport;
 
 @RestController
 @RequestMapping("/runner-api/v1")
@@ -36,25 +38,28 @@ public class RunnerApiController
     private final RunnerHeartbeatService heartbeatService;
     private final RunnerCommandService commandService;
     private final RunnerReconciliationService reconciliationService;
+    private final GpuDeviceCatalogService gpuCatalogService;
     private final ScheduledExecutorService scheduler;
 
     @Autowired
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             RunnerReconciliationService reconciliationService,
+            GpuDeviceCatalogService gpuCatalogService,
             @Qualifier("scheduledExecutorService") ScheduledExecutorService scheduler)
     {
         this.heartbeatService = heartbeatService;
         this.commandService = commandService;
         this.reconciliationService = reconciliationService;
+        this.gpuCatalogService = gpuCatalogService;
         this.scheduler = scheduler;
     }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService)
-    { this(heartbeatService, null, null, null); }
+    { this(heartbeatService, null, null, null, null); }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             ScheduledExecutorService scheduler)
-    { this(heartbeatService, commandService, null, scheduler); }
+    { this(heartbeatService, commandService, null, null, scheduler); }
 
     @Anonymous
     @PostMapping("/heartbeat")
@@ -109,6 +114,15 @@ public class RunnerApiController
     public void reconcile(@RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
             @RequestBody List<RunnerProcessSnapshot> snapshots)
     { reconciliationService.reconcile(runnerId, snapshots); }
+
+    @Anonymous
+    @PostMapping("/gpu-snapshots")
+    public void gpuSnapshots(
+            @RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
+            @RequestBody GpuDiscoveryReport report)
+    {
+        gpuCatalogService.ingest(runnerId, report, Instant.now());
+    }
 
     private boolean tryLease(String runnerId, DeferredResult<ResponseEntity<RunnerCommandLease>> result,
             Object deliveryLock)

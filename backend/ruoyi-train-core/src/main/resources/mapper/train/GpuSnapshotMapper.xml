@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.gpu.mapper.GpuSnapshotMapper">
+    <resultMap id="SnapshotResult" type="com.ruoyi.train.core.gpu.domain.GpuSnapshotRecord">
+        <constructor>
+            <idArg column="snapshot_id" javaType="java.lang.Long"/>
+            <arg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="visible_index" javaType="int"/>
+            <arg column="total_memory_mib" javaType="_long"/>
+            <arg column="used_memory_mib" javaType="_long"/>
+            <arg column="utilization_percent" javaType="int"/>
+            <arg column="mig_mode" javaType="java.lang.String"/>
+            <arg column="sampled_at" javaType="java.time.Instant"/>
+            <arg column="compute_processes_json" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="columns">
+        runner_id, gpu_uuid, visible_index, total_memory_mib, used_memory_mib,
+        utilization_percent, mig_mode, sampled_at, compute_processes, created_at
+    </sql>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.gpu.domain.GpuSnapshotRecord">
+        INSERT INTO train_gpu_snapshot
+            (<include refid="columns"/>)
+        VALUES
+            (#{runnerId}, #{gpuUuid}, #{visibleIndex}, #{totalMemoryMiB}, #{usedMemoryMiB},
+             #{utilizationPercent}, #{migMode}, #{sampledAt},
+             CAST(#{computeProcessesJson} AS JSON), #{createdAt})
+    </insert>
+
+    <insert id="insertBatch">
+        INSERT INTO train_gpu_snapshot
+            (<include refid="columns"/>)
+        VALUES
+        <foreach collection="snapshots" item="s" separator=",">
+            (#{s.runnerId}, #{s.gpuUuid}, #{s.visibleIndex}, #{s.totalMemoryMiB}, #{s.usedMemoryMiB},
+             #{s.utilizationPercent}, #{s.migMode}, #{s.sampledAt},
+             CAST(#{s.computeProcessesJson} AS JSON), #{s.createdAt})
+        </foreach>
+    </insert>
+</mapper>
