@@ -12,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
@@ -37,12 +38,13 @@ import com.ruoyi.train.runner.protocol.RunnerRequestSigner;
 class RunnerAuthenticationInterceptorTest
 {
     private static final Instant NOW = Instant.parse("2026-10-03T12:00:00Z");
-    private static final byte[] SECRET = "runner-shared-secret".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] SECRET = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] STORED_SECRET = Base64.getUrlEncoder().withoutPadding().encode(SECRET);
     private final Set<String> claimed = new HashSet<>();
     private final RunnerCredentialCipher cipher = new RunnerCredentialCipher(new byte[32]);
     private final RunnerMapper mapper = (RunnerMapper) Proxy.newProxyInstance(RunnerMapper.class.getClassLoader(),
             new Class<?>[] { RunnerMapper.class }, (proxy, method, args) ->
-                    new RunnerRecord(1L, "runner", "linux", "/tmp", cipher.encrypt(SECRET),
+                    new RunnerRecord(1L, "runner", "linux", "/tmp", cipher.encrypt(STORED_SECRET),
                             "ACTIVE", null, NOW, NOW));
     private final RunnerNonceStore nonces = (id, nonce, ttl) -> claimed.add(id + ":" + nonce);
     private final RunnerRequestVerifier verifier = new RunnerRequestVerifier(mapper, cipher, nonces,

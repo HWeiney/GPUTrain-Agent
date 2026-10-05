@@ -71,13 +71,31 @@ public class RunnerRequestVerifier
         RunnerRecord runner = runnerMapper.findById(runnerId);
         if (runner == null || !"ACTIVE".equals(runner.status()) || runner.secretCiphertext() == null)
             throw invalid();
-        byte[] secret;
+        byte[] encodedSecret;
         try
         {
-            secret = cipher.decrypt(runner.secretCiphertext());
+            encodedSecret = cipher.decrypt(runner.secretCiphertext());
         }
         catch (IllegalArgumentException failure)
         {
+            throw invalid();
+        }
+        byte[] secret;
+        try
+        {
+            secret = Base64.getUrlDecoder().decode(encodedSecret);
+        }
+        catch (IllegalArgumentException failure)
+        {
+            throw invalid();
+        }
+        finally
+        {
+            Arrays.fill(encodedSecret, (byte) 0);
+        }
+        if (secret.length != 32)
+        {
+            Arrays.fill(secret, (byte) 0);
             throw invalid();
         }
         byte[] expected;
