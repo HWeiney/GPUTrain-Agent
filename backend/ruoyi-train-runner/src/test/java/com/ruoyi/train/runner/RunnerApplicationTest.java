@@ -65,6 +65,7 @@ class RunnerApplicationTest
                 Instant.now().plusSeconds(30), 1);
         List<RunnerProcessSnapshot> sent = new CopyOnWriteArrayList<>();
         AtomicInteger polls = new AtomicInteger();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/runner-api/v1/processes/reconcile", exchange -> {
             RunnerProcessSnapshot[] batch = json.readValue(exchange.getRequestBody(), RunnerProcessSnapshot[].class);
@@ -77,7 +78,9 @@ class RunnerApplicationTest
                 byte[] body = json.writeValueAsBytes(lease);
                 exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
             }
-            else reject(exchange, "RUNNER_AUTH_INVALID");
+            else if (sent.stream().anyMatch(s -> s.status() == RunnerProcessStatus.STOPPED)
+                    || System.nanoTime() >= deadline) reject(exchange, "RUNNER_AUTH_INVALID");
+            else { exchange.sendResponseHeaders(204, -1); exchange.close(); }
         });
         server.createContext("/runner-api/v1/commands/" + stopId + "/reports", exchange -> {
             exchange.getRequestBody().readAllBytes(); exchange.sendResponseHeaders(204, -1); exchange.close();

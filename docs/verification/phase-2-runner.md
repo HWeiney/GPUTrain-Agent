@@ -261,16 +261,27 @@ PY
 
 对所有本地 `RUNNING` 状态文件分别核验并确认无活进程后，可停止 unit 以隔离 Runner；控制面恢复后仍需完成对账并核对最终状态。人工 TERM 不能替代 API 的幂等 STOP 验收，也不能被记为阶段二通过。若无法核对身份或某个进程未退出，不执行 `systemctl stop/disable`，请求熟悉该主机的操作者介入。
 
-## 待填写的远程证据
+## 2026-10-05 实机验收记录
 
 | 检查 | 实测时间 / ID / 结果 |
 |---|---|
-| 一次注册与重用错误码 | 待执行 |
-| 密钥文件权限、unit 校验、心跳在线 | 待执行 |
-| success：命令 UUID、退出码、stdout、进程数 | 待执行 |
-| failure：命令 UUID、退出码、stderr、进程数 | 待执行 |
-| sleep：重启前后 PID / 启动时间 / 进程数 | 待执行 |
-| 停止及重复停止的最终状态 | 待执行 |
-| 根目录内文件清单与目录外基线对比 | 待执行 |
+| 一次注册与重用错误码 | Runner ID 1；重复注册返回 `ENROLLMENT_ALREADY_USED`。 |
+| 密钥文件权限、unit 校验、心跳在线 | `runner.secret` 与 `runner.properties` 均为 600；注册后 Runner 曾在线。 |
+| success | `cb635e26-ca36-4764-ba4b-e868cbea8928`；`SUCCEEDED`、退出码 0，stdout 恰为 `fixture success`。 |
+| failure | `841d4825-aac9-4394-bf58-a82c244b71e5`；`FAILED`、退出码 17，stderr 恰为 `fixture failure`。 |
+| sleep：重启前后 PID / 启动时间 / 进程数 | 首次任务 `527cb306-74b7-48f9-b4d7-2d0557f5913f`，PID 4022721，`2026-10-05T06:33:37.050Z`；重启后仍为原 PID，匹配进程数 1。但 Runner 将其上报为 `IDENTITY_MISMATCH`。 |
+| 停止及重复停止 | 两次返回同一 STOP UUID `2e046985-0634-40d9-b6e7-91a97c766424`；STOP 最终 `FAILED/PROCESS_IDENTITY_MISMATCH`，未通过。 |
+| 第二次恢复复现 | 任务 `9f921b06-8945-44fb-ac9d-7103f12f8176`，PID 4036001，`2026-10-05T06:46:31.800Z`；重启后本地进程仍存活，外部只读身份检查四项全匹配，而带 `PrivateTmp=true` 的 Runner 读不到 `/proc/<pid>/exe`，上报 `IDENTITY_MISMATCH`。 |
+| 最终恢复和停止 | 移除测试主机 unit 的 `PrivateTmp` 后，命令 `09723651-8c35-4521-a3d5-19c0fd5401fe` 的 PID 4052296 和启动时间 `2026-10-05T07:03:19.560Z` 在重启前后相同；数据库对账为 `RUNNING/RUNNING`，匹配进程数 1。两次 STOP 返回 UUID `5418bd77-9404-4141-9e43-b23ee4988c93`；最终本地及数据库均为 `STOPPED`，PID 已退出。 |
+| 测试残留清理 | 两条先前未能停止且进程已退出的 START 记录，经精确 UUID/PID 核对后标记为 `FAILED`；对应本地过期状态文件已移除。重启后 Runner 为 `active`，运行中 START 命令数为 0，fixture 进程数为 0。一次性认证、请求、响应和诊断文件已移除。 |
+| 根目录内文件清单与目录外基线对比 | 三个保留的状态文件及本次日志均在 `.gputrain/` 下；配置与密钥在 `config/` 且权限 600。没有部署前的目录外清单，无法追溯证明目录外绝无新增或修改。 |
 
-当前不得写“Linux 已通过”。阶段三 GPU 发现、调度和真实训练执行也不在本验收范围内。
+首次部署时，本地 JVM 的启动时间为 `06:33Z`，数据库将其写成 `14:33`。`application-local.yml` 的 JDBC 时区现改为 UTC；修复版控制面已部署，第二次任务的数据库时间为 `06:46:31.800`，与本地一致。三个旧测试进程行已按精确命令 ID 修正 8 小时偏差，未改动其他记录。
+
+`PrivateTmp=true` 是第二个独立问题。通过带该设置的临时 systemd 用户单元复现了 `ProcessHandle` 可执行路径不可见；仅启用 `NoNewPrivileges=true` 的单元可正常读取。用户明确同意后，仓库和主机上的 Runner unit 均去掉 `PrivateTmp`；`NoNewPrivileges=yes`、`KillMode=process` 保留。最终恢复和 API STOP 已通过。
+
+先前验收创建的两个长任务均已退出；第二个任务在身份复核后由精确 PID 发送 TERM，不计作 API STOP 通过。对应数据库残留已结案，临时诊断版 Runner JAR 已恢复为正式 JAR。功能性 Linux 验收已通过；第 8 项关于目录外无修改的历史断言缺少事前基线，只能依据路径策略测试和已观察到的生成文件范围判断，不能作绝对证明。
+
+阶段三 GPU 发现、调度和真实训练执行不在本验收范围内。
+
+提交前回归：完整 Maven Reactor 打包、前端 Vitest（1/1）、前端生产构建与 `git diff --check` 均通过。恢复测试曾因模拟服务在子进程退出状态对账前就拒绝下一次轮询而间歇失败；现等待 STOPPED 快照或 10 秒超时再结束，保留真实失败的上限。

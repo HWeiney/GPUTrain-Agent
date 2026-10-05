@@ -12,7 +12,7 @@ RestartSec=5
 # Fixture processes must survive a Runner restart for identity reconciliation.
 KillMode=process
 NoNewPrivileges=true
-PrivateTmp=true
+# PrivateTmp hides the old child's executable from ProcessHandle after restart.
 UMask=0077
 
 [Install]
