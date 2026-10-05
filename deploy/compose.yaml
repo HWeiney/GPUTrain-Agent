@@ -14,6 +14,7 @@ services:
       - ../backend/sql/quartz.sql:/docker-entrypoint-initdb.d/02-quartz.sql:ro
       - ../backend/sql/gputrain_menu.sql:/docker-entrypoint-initdb.d/03-gputrain-menu.sql:ro
       - ../backend/sql/gputrain_runner.sql:/docker-entrypoint-initdb.d/04-gputrain-runner.sql:ro
+      - ../backend/sql/gputrain_phase3.sql:/docker-entrypoint-initdb.d/05-gputrain-phase3.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
