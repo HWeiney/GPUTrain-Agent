@@ -21,7 +21,7 @@ class RunnerHeartbeatServiceTest
 {
     private static final Instant NOW = Instant.parse("2026-10-03T12:00:00Z");
     private final List<Object> updates = new ArrayList<>();
-    private final RunnerRecord runner = new RunnerRecord(1L, "runner", "linux", "/tmp",
+    private final RunnerRecord runner = new RunnerRecord(1L, 1L, "runner", "linux", "/tmp",
             "encrypted", "ACTIVE", null, NOW, NOW);
     private final RunnerMapper mapper = (RunnerMapper) Proxy.newProxyInstance(RunnerMapper.class.getClassLoader(),
             new Class<?>[] { RunnerMapper.class }, (proxy, method, args) -> switch (method.getName())

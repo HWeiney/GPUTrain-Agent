@@ -119,7 +119,7 @@ public final class ProcessSupervisor implements AutoCloseable
                 }
             }
             entry.timeout = timer.schedule(() -> {
-                try { stop(commandId); }
+                try { terminate(commandId, true); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
                 catch (IOException failure) { throw new UncheckedIOException(failure); }
             }, spec.timeoutSeconds(), TimeUnit.SECONDS);
@@ -135,7 +135,7 @@ public final class ProcessSupervisor implements AutoCloseable
         if (!entry.process.isAlive() && entry.stdoutPump.isDone() && entry.stderrPump.isDone()
                 && entry.status == RunnerProcessStatus.RUNNING)
         {
-            entry.status = entry.stopRequested ? RunnerProcessStatus.STOPPED
+            entry.status = entry.timedOut ? RunnerProcessStatus.FAILED : entry.stopRequested ? RunnerProcessStatus.STOPPED
                 : entry.process.exitValue() == 0 && pumped(entry.stdoutPump) && pumped(entry.stderrPump)
                     ? RunnerProcessStatus.SUCCEEDED : RunnerProcessStatus.FAILED;
             entry.timeout.cancel(false);
@@ -149,6 +149,9 @@ public final class ProcessSupervisor implements AutoCloseable
     }
 
     public synchronized RunnerProcessSnapshot stop(UUID commandId) throws InterruptedException, IOException
+    { return terminate(commandId, false); }
+
+    private synchronized RunnerProcessSnapshot terminate(UUID commandId, boolean timeout) throws InterruptedException, IOException
     {
         ManagedProcess restored = recovered.get(commandId);
         if (restored != null) return stopRecovered(restored);
@@ -156,9 +159,15 @@ public final class ProcessSupervisor implements AutoCloseable
         if (current.status() != RunnerProcessStatus.RUNNING) return current;
         Entry entry = require(commandId);
         ManagedProcess identity = managed(commandId, entry);
-        ProcessLookup.View view = matchingLive(identity);
-        entry.stopRequested = true;
-        view.destroy().getAsBoolean();
+        matchingLive(identity);
+        if (timeout) entry.timedOut = true; else entry.stopRequested = true;
+        List<ProcessHandle> descendants = entry.process.toHandle().descendants().toList();
+        descendants.forEach(ProcessHandle::destroy);
+        matchingLive(identity).destroy().getAsBoolean();
+        long childDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < childDeadline && descendants.stream().anyMatch(ProcessHandle::isAlive))
+            Thread.sleep(20);
+        descendants.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
         if (!entry.process.waitFor(2, TimeUnit.SECONDS))
         {
             matchingLive(identity).destroyForcibly().getAsBoolean();
@@ -267,7 +276,8 @@ public final class ProcessSupervisor implements AutoCloseable
     private RunnerProcessSnapshot snapshot(UUID id, Entry e)
     {
         return new RunnerProcessSnapshot(id, e.process.pid(), e.startedAt, e.spec.executable().toString(),
-            argumentsSha256(e.spec.arguments()), e.status, e.process.isAlive() ? null : e.process.exitValue(), null,
+            argumentsSha256(e.spec.arguments()), e.status, e.process.isAlive() ? null : e.process.exitValue(),
+            e.timedOut ? RunnerErrorCode.PROCESS_TIMEOUT : null,
             e.attempt);
     }
     public static String argumentsSha256(List<String> arguments)
@@ -304,6 +314,7 @@ public final class ProcessSupervisor implements AutoCloseable
         Future<Boolean> stdoutPump;
         Future<Boolean> stderrPump;
         boolean stopRequested;
+        boolean timedOut;
         Entry(ValidatedProcessSpec spec, Process process, Instant startedAt, int attempt)
         { this.spec = spec; this.process = process; this.startedAt = startedAt; this.attempt = attempt; }
     }

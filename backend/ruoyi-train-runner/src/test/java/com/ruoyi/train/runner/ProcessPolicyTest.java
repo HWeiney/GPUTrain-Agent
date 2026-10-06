@@ -56,4 +56,23 @@ class ProcessPolicyTest
             assertEquals(RunnerErrorCode.ENVIRONMENT_NOT_ALLOWED, assertThrows(ProcessPolicyException.class,
                 () -> permissive.validate(spec(root, java, Map.of(key, "unsafe")))).code());
     }
+
+    @Test void bashIsLimitedToTheFixedDocOwlTrainingProfile() throws Exception
+    {
+        Properties properties = RunnerConfigTest.properties(root);
+        properties.setProperty("executableAllowlist", java + ",/bin/bash");
+        properties.setProperty("environmentAllowlist", "CUDA_VISIBLE_DEVICES,MODEL_PATH,PYTHON_BIN,NPROC_PER_NODE,MAX_STEPS,RUN_MODE,AUTO_EVAL,TRAIN_EVAL_STRATEGY,RUN_ID");
+        var fixedPolicy = new ProcessPolicy(RunnerConfig.from(properties));
+        Map<String, String> env = Map.of("CUDA_VISIBLE_DEVICES", "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee,GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeef,GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0",
+                "MODEL_PATH", "/model/hanw/ms-swift-imp3-research/pretrained-imp/DocOwl2",
+                "PYTHON_BIN", "/home/hanw/.conda/envs/swift/bin/python", "NPROC_PER_NODE", "3",
+                "MAX_STEPS", "1", "RUN_MODE", "foreground", "AUTO_EVAL", "False", "TRAIN_EVAL_STRATEGY", "no", "RUN_ID", "gputrain-test");
+        List<String> args = List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
+                "/model/hanw/ms-swift-imp3-research/configs/ocr_evidence/docowl2_srfund.env");
+        var fixed = new ProcessSpec(root.toString(), "/bin/bash", args, env, 3600, "test");
+        assertEquals(args, fixedPolicy.validate(fixed).arguments());
+        var arbitrary = new ProcessSpec(root.toString(), "/bin/bash", List.of("-c", "echo unsafe"), env, 10, "bad");
+        assertEquals(RunnerErrorCode.EXECUTABLE_NOT_ALLOWED,
+                assertThrows(ProcessPolicyException.class, () -> fixedPolicy.validate(arbitrary)).code());
+    }
 }

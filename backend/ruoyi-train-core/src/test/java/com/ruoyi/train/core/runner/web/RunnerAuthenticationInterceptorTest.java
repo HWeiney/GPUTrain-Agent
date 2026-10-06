@@ -44,7 +44,7 @@ class RunnerAuthenticationInterceptorTest
     private final RunnerCredentialCipher cipher = new RunnerCredentialCipher(new byte[32]);
     private final RunnerMapper mapper = (RunnerMapper) Proxy.newProxyInstance(RunnerMapper.class.getClassLoader(),
             new Class<?>[] { RunnerMapper.class }, (proxy, method, args) ->
-                    new RunnerRecord(1L, "runner", "linux", "/tmp", cipher.encrypt(STORED_SECRET),
+                    new RunnerRecord(1L, 1L, "runner", "linux", "/tmp", cipher.encrypt(STORED_SECRET),
                             "ACTIVE", null, NOW, NOW));
     private final RunnerNonceStore nonces = (id, nonce, ttl) -> claimed.add(id + ":" + nonce);
     private final RunnerRequestVerifier verifier = new RunnerRequestVerifier(mapper, cipher, nonces,

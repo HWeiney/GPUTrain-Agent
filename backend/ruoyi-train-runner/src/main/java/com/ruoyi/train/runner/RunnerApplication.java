@@ -145,7 +145,8 @@ public final class RunnerApplication implements AutoCloseable
             RunnerProcessSnapshot snapshot = supervisor.observe(entry.getKey());
             if (snapshot.status() != RunnerProcessStatus.RUNNING)
             {
-                queue(entry.getValue(), RunnerCommandStatus.RUNNING, RunnerCommandStatus.valueOf(snapshot.status().name()), snapshot, null);
+                queue(entry.getValue(), RunnerCommandStatus.RUNNING, RunnerCommandStatus.valueOf(snapshot.status().name()), snapshot,
+                        snapshot.errorCode());
                 iterator.remove();
             }
         }

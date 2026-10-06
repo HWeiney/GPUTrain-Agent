@@ -32,7 +32,7 @@ class RunnerRequestVerifierTest
     private static final byte[] STORED_SECRET = Base64.getUrlEncoder().withoutPadding().encode(SECRET);
     private final Set<String> claimed = new HashSet<>();
     private final RunnerCredentialCipher cipher = new RunnerCredentialCipher(new byte[32]);
-    private final RunnerRecord runner = new RunnerRecord(1L, "runner", "linux", "/tmp",
+    private final RunnerRecord runner = new RunnerRecord(1L, 1L, "runner", "linux", "/tmp",
             cipher.encrypt(STORED_SECRET), "ACTIVE", null, NOW, NOW);
     private final RunnerMapper mapper = (RunnerMapper) Proxy.newProxyInstance(RunnerMapper.class.getClassLoader(),
             new Class<?>[] { RunnerMapper.class }, (proxy, method, args) ->

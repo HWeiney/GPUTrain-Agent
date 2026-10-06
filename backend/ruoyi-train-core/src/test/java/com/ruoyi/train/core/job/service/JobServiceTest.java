@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,7 +50,9 @@ class JobServiceTest
         assertEquals(Long.valueOf(1L), job.runnerId());
         assertNotNull(job.startCommandId());
         assertEquals(1, leaseService.allocateCalls);
+        assertEquals(10L, leaseService.lastOwnerUserId);
         assertEquals(1, commandService.createCalls);
+        assertEquals("gpu-0", commandService.lastProcessSpec.environment().get("CUDA_VISIBLE_DEVICES"));
     }
 
     @Test
@@ -103,10 +106,70 @@ class JobServiceTest
         assertNotNull(stopping.stopCommandId());
         assertEquals(1, commandService.stopCalls);
 
-        commandMapper.setStatus(job.startCommandId(), "STOPPED");
-        JobRecord stopped = service.sync(job.jobId(), NOW);
+        commandMapper.setStatus(stopping.stopCommandId(), "STOPPED");
+        service.syncCommand(java.util.UUID.fromString(
+                commandMapper.findById(stopping.stopCommandId()).commandUuid()), NOW);
+        JobRecord stopped = jobMapper.findById(job.jobId());
         assertEquals(JobStatus.STOPPED.name(), stopped.status());
         assertEquals(1, leaseService.releaseCalls);
+    }
+
+    @Test
+    void runningStartReportDoesNotUndoAnInFlightStop()
+    {
+        JobRecord job = service.submit(submission("req-stop-race", 1), NOW);
+        commandMapper.setStatus(job.startCommandId(), "RUNNING");
+        service.sync(job.jobId(), NOW);
+        JobRecord stopping = service.stop(job.jobId(), NOW);
+        commandMapper.setStatus(stopping.stopCommandId(), "SUCCEEDED");
+
+        assertEquals(JobStatus.STOPPING.name(), service.sync(job.jobId(), NOW).status());
+        assertEquals(0, leaseService.releaseCalls);
+
+        commandMapper.setStatus(job.startCommandId(), "STOPPED");
+        assertEquals(JobStatus.STOPPED.name(), service.sync(job.jobId(), NOW).status());
+        assertEquals(1, leaseService.releaseCalls);
+    }
+
+    @Test
+    void failedStopQuarantinesJobAndKeepsGpuLease()
+    {
+        JobRecord job = service.submit(submission("req-stop-failed", 1), NOW);
+        commandMapper.setStatus(job.startCommandId(), "RUNNING");
+        service.sync(job.jobId(), NOW);
+        JobRecord stopping = service.stop(job.jobId(), NOW);
+        commandMapper.setStatus(stopping.stopCommandId(), "FAILED");
+
+        JobRecord result = service.sync(job.jobId(), NOW);
+
+        assertEquals(JobStatus.QUARANTINED.name(), result.status());
+        assertEquals(0, leaseService.releaseCalls);
+        assertFalse(leaseService.active.isEmpty());
+    }
+
+    @Test
+    void runnerCommandReportSynchronizesAssociatedJobAndReleasesLease()
+    {
+        JobRecord job = service.submit(submission("req-command-sync", 1), NOW);
+        commandMapper.setStatus(job.startCommandId(), "SUCCEEDED");
+
+        service.syncCommand(java.util.UUID.fromString(
+                commandMapper.findById(job.startCommandId()).commandUuid()), NOW);
+
+        assertEquals(JobStatus.SUCCEEDED.name(), jobMapper.findById(job.jobId()).status());
+        assertEquals(1, leaseService.releaseCalls);
+    }
+
+    @Test
+    void clientCannotOverrideSchedulerGpuBinding()
+    {
+        JobSubmission invalid = new JobSubmission(10L, 1, 8000L, null, null, "req-env",
+                "/data/fixtures", "python3", List.of("train.py"),
+                Map.of("cuda_visible_devices", "0"), 300L);
+
+        assertThrows(IllegalArgumentException.class, () -> service.submit(invalid, NOW));
+        assertEquals(0, leaseService.allocateCalls);
+        assertEquals(0, commandService.createCalls);
     }
 
     @Test
@@ -156,7 +219,7 @@ class JobServiceTest
                 });
     }
 
-    private static final class InMemoryJobMapper implements com.ruoyi.train.core.job.mapper.JobMapper
+    private final class InMemoryJobMapper implements com.ruoyi.train.core.job.mapper.JobMapper
     {
         private final Map<Long, JobRecord> store = new HashMap<>();
         private final AtomicLong ids = new AtomicLong();
@@ -186,6 +249,15 @@ class JobServiceTest
         }
 
         @Override
+        public JobRecord findByCommandUuid(String commandUuid)
+        {
+            return store.values().stream().filter(j ->
+                    (j.startCommandId() != null && commandMapper.findById(j.startCommandId()).commandUuid().equals(commandUuid))
+                    || (j.stopCommandId() != null && commandMapper.findById(j.stopCommandId()).commandUuid().equals(commandUuid)))
+                    .findFirst().orElse(null);
+        }
+
+        @Override
         public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin)
         {
             return store.values().stream()
@@ -203,14 +275,15 @@ class JobServiceTest
         }
 
         @Override
-        public int attachStartCommand(long jobId, long runnerId, long startCommandId, Instant updatedAt)
+        public int attachStartCommand(long jobId, long runnerId, long startCommandId,
+                String processSpecJson, Instant updatedAt)
         {
             JobRecord current = store.get(jobId);
             if (current == null) return 0;
             JobRecord next = new JobRecord(current.jobId(), current.jobUuid(),
                     current.ownerUserId(), runnerId, current.gpuCount(), current.minMemoryMiB(),
                     current.allowedGpuUuidsJson(), current.deniedGpuUuidsJson(),
-                    current.processSpecJson(), JobStatus.STARTING.name(), current.requestKey(),
+                    processSpecJson, JobStatus.STARTING.name(), current.requestKey(),
                     startCommandId, current.stopCommandId(), current.createdAt(), updatedAt);
             store.put(jobId, next);
             return 1;
@@ -314,6 +387,7 @@ class JobServiceTest
     private static final class FakeLeaseService extends GpuLeaseService
     {
         int allocateCalls, renewCalls, releaseCalls;
+        long lastOwnerUserId;
         private final List<GpuLeaseRecord> active = new ArrayList<>();
 
         FakeLeaseService()
@@ -328,6 +402,7 @@ class JobServiceTest
                 String key, Instant now)
         {
             allocateCalls++;
+            lastOwnerUserId = request.ownerUserId();
             active.clear();
             for (int i = 0; i < request.gpuCount(); i++)
                 active.add(new GpuLeaseRecord((long) (i + 1), "lease-" + i, jobId, 1L,
@@ -356,6 +431,7 @@ class JobServiceTest
     private static final class FakeCommandService extends RunnerCommandService
     {
         int createCalls, stopCalls;
+        ProcessSpec lastProcessSpec;
         private final InMemoryCommandMapper mapper;
 
         FakeCommandService(InMemoryCommandMapper mapper)
@@ -370,6 +446,7 @@ class JobServiceTest
                 long creatorUserId)
         {
             createCalls++;
+            lastProcessSpec = spec;
             return mapper.add("START_PROCESS", java.util.UUID.randomUUID().toString(), "QUEUED");
         }
 

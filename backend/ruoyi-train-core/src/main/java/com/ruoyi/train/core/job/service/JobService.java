@@ -1,9 +1,12 @@
 package com.ruoyi.train.core.job.service;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -54,6 +57,8 @@ public class JobService
         Objects.requireNonNull(now, "now");
         if (submission.ownerUserId() <= 0)
             throw new IllegalArgumentException("Owner user id must be positive");
+        if (submission.environment().keySet().stream().anyMatch("CUDA_VISIBLE_DEVICES"::equalsIgnoreCase))
+            throw new IllegalArgumentException("CUDA_VISIBLE_DEVICES is assigned by the scheduler");
         JobRecord existing = jobMapper.findByRequestKey(submission.requestKey());
         if (existing != null)
             return existing;
@@ -68,18 +73,25 @@ public class JobService
         JobRecord persisted = jobMapper.findByRequestKey(submission.requestKey());
         long jobId = persisted.jobId();
 
-        GpuAllocationRequest allocation = new GpuAllocationRequest(submission.gpuCount(),
+        GpuAllocationRequest allocation = new GpuAllocationRequest(submission.ownerUserId(), submission.gpuCount(),
                 submission.minMemoryMiB(), submission.allowedUuids(),
-                submission.deniedUuids(), true);
+                submission.deniedUuids(), true, submission.minFreeMemoryMiB(),
+                submission.allowExternalOccupancy());
         List<GpuLeaseRecord> leases = leaseService.allocate(jobId, allocation,
                 "lease:" + submission.requestKey(), now);
         long runnerId = leases.get(0).runnerId();
 
-        ProcessSpec spec = submission.toProcessSpec();
+        ProcessSpec requested = submission.toProcessSpec();
+        Map<String, String> assignedEnvironment = new HashMap<>(requested.environment());
+        assignedEnvironment.put("CUDA_VISIBLE_DEVICES", leases.stream()
+                .map(GpuLeaseRecord::gpuUuid).collect(Collectors.joining(",")));
+        ProcessSpec spec = new ProcessSpec(requested.workingDirectory(), requested.executable(),
+                requested.arguments(), assignedEnvironment, requested.timeoutSeconds(),
+                requested.idempotencyKey());
         RunnerCommandRecord start = commandService.createFixtureCommand(
                 String.valueOf(runnerId), spec, submission.ownerUserId());
 
-        if (jobMapper.attachStartCommand(jobId, runnerId, start.commandId(), now) != 1)
+        if (jobMapper.attachStartCommand(jobId, runnerId, start.commandId(), writeJson(spec), now) != 1)
             throw new IllegalStateException("Unable to attach start command");
         return jobMapper.findById(jobId);
     }
@@ -90,10 +102,29 @@ public class JobService
         JobRecord job = requireJob(jobId);
         if (job.startCommandId() == null || JobStatus.valueOf(job.status()).isTerminal())
             return job;
+        if (JobStatus.QUARANTINED.name().equals(job.status())) return job;
+        if (job.stopCommandId() != null)
+        {
+            RunnerCommandRecord stop = commandMapper.findById(job.stopCommandId());
+            if (stop != null && "STOPPED".equals(stop.status()))
+            {
+                finish(job, JobStatus.STOPPED, now);
+                return jobMapper.findById(jobId);
+            }
+            if (stop != null && ("FAILED".equals(stop.status()) || "REJECTED".equals(stop.status())))
+            {
+                transition(job, JobStatus.QUARANTINED, now);
+                return jobMapper.findById(jobId);
+            }
+        }
         RunnerCommandRecord command = commandMapper.findById(job.startCommandId());
         switch (command.status())
         {
-            case "RUNNING" -> advance(job, JobStatus.RUNNING, now, true);
+            case "RUNNING" -> {
+                if (!JobStatus.RUNNING.name().equals(job.status())
+                        && !JobStatus.STOPPING.name().equals(job.status()))
+                    advance(job, JobStatus.RUNNING, now, true);
+            }
             case "SUCCEEDED" -> finish(job, JobStatus.SUCCEEDED, now);
             case "FAILED" -> finish(job, JobStatus.FAILED, now);
             case "STOPPED" -> finish(job, JobStatus.STOPPED, now);
@@ -101,6 +132,14 @@ public class JobService
             default -> { /* QUEUED / LEASED remain STARTING */ }
         }
         return jobMapper.findById(jobId);
+    }
+
+    /** Synchronize an associated job immediately after a Runner command report. */
+    @Transactional
+    public void syncCommand(UUID commandUuid, Instant now)
+    {
+        JobRecord job = jobMapper.findByCommandUuid(commandUuid.toString());
+        if (job != null) sync(job.jobId(), now);
     }
 
     @Transactional

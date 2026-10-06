@@ -6,10 +6,10 @@
             <idArg column="snapshot_id" javaType="java.lang.Long"/>
             <arg column="runner_id" javaType="java.lang.Long"/>
             <arg column="gpu_uuid" javaType="java.lang.String"/>
-            <arg column="visible_index" javaType="int"/>
+            <arg column="visible_index" javaType="_int"/>
             <arg column="total_memory_mib" javaType="_long"/>
             <arg column="used_memory_mib" javaType="_long"/>
-            <arg column="utilization_percent" javaType="int"/>
+            <arg column="utilization_percent" javaType="_int"/>
             <arg column="mig_mode" javaType="java.lang.String"/>
             <arg column="sampled_at" javaType="java.time.Instant"/>
             <arg column="compute_processes_json" javaType="java.lang.String"/>

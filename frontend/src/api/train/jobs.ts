@@ -18,16 +18,9 @@ export interface TrainJob {
 }
 
 export interface CreateTrainJobRequest {
-  gpuCount: number
-  minMemoryMiB: number
-  allowedGpuUuids: string[] | null
-  deniedGpuUuids: string[] | null
+  profileId: 'docowl2-srfund'
+  maxSteps: number
   requestKey: string
-  workingDirectory: string
-  executable: string
-  arguments: string[]
-  environment: Record<string, string>
-  timeoutSeconds: number
 }
 
 export function listTrainJobs(): Promise<AjaxResult<TrainJob[]>> {

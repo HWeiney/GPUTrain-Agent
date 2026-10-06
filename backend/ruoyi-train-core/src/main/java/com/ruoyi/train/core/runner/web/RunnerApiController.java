@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.async.DeferredResult;
 import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.train.core.gpu.service.GpuDeviceCatalogService;
+import com.ruoyi.train.core.job.service.JobService;
 import com.ruoyi.train.core.runner.domain.RunnerCommandRecord;
 import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.core.runner.service.RunnerHeartbeatService;
@@ -40,26 +41,29 @@ public class RunnerApiController
     private final RunnerReconciliationService reconciliationService;
     private final GpuDeviceCatalogService gpuCatalogService;
     private final ScheduledExecutorService scheduler;
+    private final JobService jobService;
 
     @Autowired
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             RunnerReconciliationService reconciliationService,
             GpuDeviceCatalogService gpuCatalogService,
-            @Qualifier("scheduledExecutorService") ScheduledExecutorService scheduler)
+            @Qualifier("scheduledExecutorService") ScheduledExecutorService scheduler,
+            JobService jobService)
     {
         this.heartbeatService = heartbeatService;
         this.commandService = commandService;
         this.reconciliationService = reconciliationService;
         this.gpuCatalogService = gpuCatalogService;
         this.scheduler = scheduler;
+        this.jobService = jobService;
     }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService)
-    { this(heartbeatService, null, null, null, null); }
+    { this(heartbeatService, null, null, null, null, null); }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             ScheduledExecutorService scheduler)
-    { this(heartbeatService, commandService, null, null, scheduler); }
+    { this(heartbeatService, commandService, null, null, scheduler, null); }
 
     @Anonymous
     @PostMapping("/heartbeat")
@@ -106,14 +110,20 @@ public class RunnerApiController
             @RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
             @PathVariable UUID id, @RequestBody RunnerCommandReport report)
     {
-        return commandService.report(runnerId, id, report);
+        RunnerCommandRecord result = commandService.report(runnerId, id, report);
+        if (jobService != null) jobService.syncCommand(id, Instant.now());
+        return result;
     }
 
     @Anonymous
     @PostMapping("/processes/reconcile")
     public void reconcile(@RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
             @RequestBody List<RunnerProcessSnapshot> snapshots)
-    { reconciliationService.reconcile(runnerId, snapshots); }
+    {
+        reconciliationService.reconcile(runnerId, snapshots);
+        if (jobService != null)
+            snapshots.forEach(snapshot -> jobService.syncCommand(snapshot.commandId(), Instant.now()));
+    }
 
     @Anonymous
     @PostMapping("/gpu-snapshots")

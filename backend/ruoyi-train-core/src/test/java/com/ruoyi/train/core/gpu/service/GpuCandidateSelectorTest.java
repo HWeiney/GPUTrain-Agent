@@ -11,7 +11,7 @@ class GpuCandidateSelectorTest
     private GpuAllocationCandidate c(String uuid, String host, long mem, boolean schedulable,
             boolean fresh, DeviceIdentityState state)
     {
-        return new GpuAllocationCandidate(uuid, host, mem, schedulable, fresh, state);
+        return new GpuAllocationCandidate(uuid, host, mem, schedulable, fresh, state, 1L);
     }
 
     private GpuAllocationCandidate good(String uuid, String host, long mem)
@@ -22,7 +22,7 @@ class GpuCandidateSelectorTest
     private GpuAllocationRequest req(int count, long minMem, boolean sameHost,
             Set<String> allowed, Set<String> denied)
     {
-        return new GpuAllocationRequest(count, minMem, allowed, denied, sameHost);
+        return new GpuAllocationRequest(1L, count, minMem, allowed, denied, sameHost);
     }
 
     @Test void selectsSingleSchedulableFreshDevice()
@@ -103,5 +103,28 @@ class GpuCandidateSelectorTest
                 List.of(stale, occupied, mig, good("GPU-ok", "h1", 80000)),
                 req(1, 1, false, Set.of(), Set.of()));
         assertEquals(List.of("GPU-ok"), chosen.stream().map(GpuAllocationCandidate::gpuUuid).toList());
+    }
+
+    @Test void sharedProfileCanChooseExternalGpuOnlyWhenFreeMemoryIsEnough()
+    {
+        GpuCandidateSelector selector = new GpuCandidateSelector();
+        var busy = new GpuAllocationCandidate("GPU-busy", "h1", 100000, 20000,
+                false, true, DeviceIdentityState.EXTERNAL_OCCUPIED, 1L);
+        var moreFree = new GpuAllocationCandidate("GPU-more", "h1", 100000, 10000,
+                false, true, DeviceIdentityState.EXTERNAL_OCCUPIED, 1L);
+        var request = new GpuAllocationRequest(1L, 1, 0, Set.of(), Set.of(), true, 75000, true);
+        assertEquals(List.of("GPU-more"), selector.select(List.of(busy, moreFree), request)
+                .stream().map(GpuAllocationCandidate::gpuUuid).toList());
+    }
+
+    @Test void sharedProfileStillRejectsMigAndAmbiguousIdentity()
+    {
+        GpuCandidateSelector selector = new GpuCandidateSelector();
+        var mig = new GpuAllocationCandidate("GPU-mig", "h1", 100000, 0,
+                false, true, DeviceIdentityState.MIG_UNSUPPORTED, 1L);
+        var ambiguous = new GpuAllocationCandidate("GPU-amb", "h1", 100000, 0,
+                false, true, DeviceIdentityState.IDENTITY_AMBIGUOUS, 1L);
+        var request = new GpuAllocationRequest(1L, 1, 0, Set.of(), Set.of(), true, 1, true);
+        assertTrue(selector.select(List.of(mig, ambiguous), request).isEmpty());
     }
 }

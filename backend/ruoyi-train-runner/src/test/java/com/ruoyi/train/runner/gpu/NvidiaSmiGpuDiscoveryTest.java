@@ -118,6 +118,19 @@ class NvidiaSmiGpuDiscoveryTest
         }
     }
 
+    @Test
+    void usesComputeFieldsSupportedByNvidiaSmi570()
+    {
+        FakeExecutor executor = new FakeExecutor(
+                Map.of("query-gpu", new ExecResult(0, GPU_CSV, ""),
+                       "query-compute-apps", new ExecResult(0, "", ""),
+                       "--version", new ExecResult(0, VERSION, "")));
+        discovery(executor).discover();
+        assertEquals(true, executor.invocations.stream().flatMap(List::stream)
+                .anyMatch(arg -> arg.equals(
+                        "--query-compute-apps=gpu_uuid,pid,process_name,used_memory")));
+    }
+
     /** Command executor backed by canned responses keyed by a flag in argv. */
     private static final class FakeExecutor implements CommandExecutor
     {

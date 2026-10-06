@@ -23,15 +23,21 @@ public final class GpuCandidateSelector
             GpuAllocationRequest request)
     {
         List<GpuAllocationCandidate> eligible = candidates.stream()
-                .filter(GpuAllocationCandidate::schedulable)
                 .filter(GpuAllocationCandidate::fresh)
-                .filter(c -> c.identityState()
-                        == com.ruoyi.train.core.gpu.domain.DeviceIdentityState.OBSERVED)
+                .filter(c -> c.identityState() == com.ruoyi.train.core.gpu.domain.DeviceIdentityState.OBSERVED
+                        || request.allowExternalOccupancy() && c.identityState()
+                            == com.ruoyi.train.core.gpu.domain.DeviceIdentityState.EXTERNAL_OCCUPIED)
+                .filter(c -> c.schedulable() || request.allowExternalOccupancy()
+                        && c.identityState() == com.ruoyi.train.core.gpu.domain.DeviceIdentityState.EXTERNAL_OCCUPIED)
                 .filter(c -> c.totalMemoryMiB() >= request.minMemoryMiB())
+                .filter(c -> c.totalMemoryMiB() - c.usedMemoryMiB() >= request.minFreeMemoryMiB())
                 .filter(c -> request.allowedUuids().isEmpty()
                         || request.allowedUuids().contains(c.gpuUuid()))
                 .filter(c -> !request.deniedUuids().contains(c.gpuUuid()))
-                .sorted(ORDER)
+                .sorted(request.allowExternalOccupancy()
+                        ? Comparator.comparingLong((GpuAllocationCandidate c) -> c.totalMemoryMiB() - c.usedMemoryMiB())
+                            .reversed().thenComparing(ORDER)
+                        : ORDER)
                 .toList();
 
         if (request.gpuCount() == 1)

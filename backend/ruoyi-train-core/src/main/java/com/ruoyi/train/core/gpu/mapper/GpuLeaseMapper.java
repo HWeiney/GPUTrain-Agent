@@ -16,10 +16,8 @@ public interface GpuLeaseMapper
     List<GpuLeaseRecord> findActiveByJob(@Param("jobId") Long jobId);
 
     /** Locks currently leasable devices, excluding any GPU with an ACTIVE lease. */
-    List<GpuAllocationCandidate> lockCandidates(@Param("freshAfter") Instant freshAfter);
-
-    /** Resolves the Runner that most recently observed a device (FK source for the lease). */
-    Long findRunnerIdForGpu(@Param("gpuUuid") String gpuUuid);
+    List<GpuAllocationCandidate> lockCandidates(@Param("freshAfter") Instant freshAfter,
+            @Param("ownerUserId") long ownerUserId);
 
     int conditionalRenew(@Param("leaseId") Long leaseId, @Param("jobId") Long jobId,
             @Param("expectedStatus") String expectedStatus,

@@ -45,7 +45,7 @@ public class GpuLeaseService
             return existing;
 
         List<GpuAllocationCandidate> candidates =
-                leaseMapper.lockCandidates(now.minus(FRESHNESS));
+                leaseMapper.lockCandidates(now.minus(FRESHNESS), request.ownerUserId());
         List<GpuAllocationCandidate> chosen = selector.select(candidates, request);
         if (chosen.size() < request.gpuCount())
             throw new RunnerProtocolException(RunnerErrorCode.GPU_UNOBSERVABLE,
@@ -55,12 +55,9 @@ public class GpuLeaseService
         Instant expires = now.plus(DEFAULT_LEASE);
         for (GpuAllocationCandidate device : chosen)
         {
-            Long runnerId = leaseMapper.findRunnerIdForGpu(device.gpuUuid());
-            if (runnerId == null)
-                throw new RunnerProtocolException(RunnerErrorCode.GPU_UNOBSERVABLE,
-                        "Device has no observing runner");
+            String deviceKey = idempotencyKey + ":" + device.gpuUuid();
             GpuLeaseRecord lease = new GpuLeaseRecord(null, UUID.randomUUID().toString(), jobId,
-                    runnerId, device.gpuUuid(), "ACTIVE", idempotencyKey,
+                    device.runnerId(), device.gpuUuid(), "ACTIVE", deviceKey,
                     now, expires, null, null, 0, now, now);
             leaseMapper.insert(lease);
             leases.add(lease);

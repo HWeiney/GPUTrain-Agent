@@ -14,7 +14,7 @@
             <arg column="expires_at" javaType="java.time.Instant"/>
             <arg column="renewed_at" javaType="java.time.Instant"/>
             <arg column="released_at" javaType="java.time.Instant"/>
-            <arg column="attempt" javaType="int"/>
+            <arg column="attempt" javaType="_int"/>
             <arg column="created_at" javaType="java.time.Instant"/>
             <arg column="updated_at" javaType="java.time.Instant"/>
         </constructor>
@@ -25,10 +25,12 @@
             <arg column="gpu_uuid" javaType="java.lang.String"/>
             <arg column="host_signature" javaType="java.lang.String"/>
             <arg column="total_memory_mib" javaType="_long"/>
+            <arg column="used_memory_mib" javaType="_long"/>
             <arg column="schedulable" javaType="_boolean"/>
             <arg column="fresh" javaType="_boolean"/>
             <arg column="identity_state"
                   javaType="com.ruoyi.train.core.gpu.domain.DeviceIdentityState"/>
+            <arg column="runner_id" javaType="_long"/>
         </constructor>
     </resultMap>
 
@@ -44,7 +46,10 @@
     </insert>
 
     <select id="findByJobAndKey" resultMap="LeaseResult">
-        SELECT * FROM train_gpu_lease WHERE job_id = #{jobId} AND idempotency_key = #{idempotencyKey}
+        SELECT * FROM train_gpu_lease
+        WHERE job_id = #{jobId}
+          AND (idempotency_key = #{idempotencyKey}
+               OR LEFT(idempotency_key, CHAR_LENGTH(#{idempotencyKey}) + 1) = CONCAT(#{idempotencyKey}, ':'))
     </select>
 
     <select id="findActiveByJob" resultMap="LeaseResult">
@@ -52,18 +57,19 @@
     </select>
 
     <select id="lockCandidates" resultMap="CandidateResult">
-        SELECT d.gpu_uuid, d.host_signature, s.total_memory_mib, d.schedulable,
+        SELECT d.gpu_uuid, d.host_signature, s.total_memory_mib, s.used_memory_mib, d.schedulable,
                (s.sampled_at &gt;= #{freshAfter}) AS fresh,
-               d.identity_state
+               d.identity_state, s.runner_id
         FROM train_gpu_device d
         JOIN (
-            SELECT t.gpu_uuid, t.total_memory_mib, t.sampled_at
+            SELECT t.gpu_uuid, t.total_memory_mib, t.used_memory_mib, t.sampled_at, t.runner_id,
+                   ROW_NUMBER() OVER (PARTITION BY t.gpu_uuid ORDER BY t.sampled_at DESC) AS owner_rank
             FROM train_gpu_snapshot t
-            JOIN (
-                SELECT gpu_uuid, MAX(sampled_at) AS m
-                FROM train_gpu_snapshot GROUP BY gpu_uuid
-            ) latest ON latest.gpu_uuid = t.gpu_uuid AND latest.m = t.sampled_at
-        ) s ON s.gpu_uuid = d.gpu_uuid
+            JOIN train_runner r ON r.runner_id = t.runner_id
+                AND r.owner_user_id = #{ownerUserId}
+                AND r.status = 'ACTIVE'
+                AND r.last_seen_at &gt;= #{freshAfter}
+        ) s ON s.gpu_uuid = d.gpu_uuid AND s.owner_rank = 1
         WHERE NOT EXISTS (
             SELECT 1 FROM train_gpu_lease l
             WHERE l.gpu_uuid = d.gpu_uuid AND l.status = 'ACTIVE'

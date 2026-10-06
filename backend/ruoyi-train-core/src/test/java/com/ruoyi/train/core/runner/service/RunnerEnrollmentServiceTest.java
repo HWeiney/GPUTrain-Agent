@@ -280,7 +280,7 @@ class RunnerEnrollmentServiceTest
             if (failInsert)
                 throw new IllegalStateException("simulated Runner insert failure");
             long id = nextId++;
-            values.put(id, new RunnerRecord(id, r.runnerName(), r.linuxUsername(), r.allowedRoot(),
+            values.put(id, new RunnerRecord(id, r.ownerUserId(), r.runnerName(), r.linuxUsername(), r.allowedRoot(),
                     r.secretCiphertext(), r.status(), r.lastSeenAt(), r.createdAt(), r.updatedAt()));
             return 1;
         }

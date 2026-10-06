@@ -5,7 +5,7 @@ runnerId=REPLACE_WITH_REGISTERED_RUNNER_ID
 credentialFile=/data/hanw/hw_code/gputrain-test/config/runner.secret
 allowedRoot=/data/hanw/hw_code/gputrain-test
 # Resolve this absolute path on the Linux host before starting the service.
-executableAllowlist=/usr/bin/java
-environmentAllowlist=LANG
+executableAllowlist=/usr/bin/java,/usr/bin/bash
+environmentAllowlist=LANG,CUDA_VISIBLE_DEVICES,MODEL_PATH,PYTHON_BIN,NPROC_PER_NODE,MAX_STEPS,RUN_MODE,AUTO_EVAL,TRAIN_EVAL_STRATEGY,RUN_ID
 heartbeatIntervalSeconds=10
 pollingTimeoutSeconds=20

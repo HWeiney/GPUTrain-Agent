@@ -55,10 +55,10 @@
             <arg column="sampled_at" javaType="java.time.Instant"/>
             <arg column="total_memory_mib" javaType="_long"/>
             <arg column="used_memory_mib" javaType="_long"/>
-            <arg column="utilization_percent" javaType="int"/>
+            <arg column="utilization_percent" javaType="_int"/>
             <arg column="mig_mode" javaType="java.lang.String"/>
             <arg column="has_active_lease" javaType="_boolean"/>
-            <arg column="external_process_count" javaType="int"/>
+            <arg column="external_process_count" javaType="_int"/>
         </constructor>
     </resultMap>
 

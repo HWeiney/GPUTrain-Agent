@@ -22,7 +22,7 @@ class NvidiaSmiCsvParserTest
             + "GPU-bbbbbbbb-1111-1111-1111-111111111111, NVIDIA A100-SXM4-40GB, 1, 40960, 0, 0, Disabled, 550.54.15\n";
 
     private static final String COMPUTE_CSV =
-            "GPU-aaaaaaaa-0000-0000-0000-000000000000, 12345, python, 1024, [N/A]\n";
+            "GPU-aaaaaaaa-0000-0000-0000-000000000000, 12345, python, 1024\n";
 
     @Test
     void parsesGpusAndLinksProcesses()
@@ -42,6 +42,17 @@ class NvidiaSmiCsvParserTest
         assertEquals(12345, first.computeProcesses().get(0).pid());
         assertEquals(1024, first.computeProcesses().get(0).usedMemoryMiB());
         assertTrue(gpus.get(1).computeProcesses().isEmpty());
+    }
+
+    @Test
+    void parsesComputeRowsWithoutOptionalGpuInstanceId()
+    {
+        String compute = "GPU-aaaaaaaa-0000-0000-0000-000000000000, 12345, python, 1024\n";
+        GpuProcessInfo process = NvidiaSmiCsvParser.parseCompute(compute)
+                .get("GPU-aaaaaaaa-0000-0000-0000-000000000000").get(0);
+        assertEquals(12345, process.pid());
+        assertEquals(1024, process.usedMemoryMiB());
+        assertEquals(null, process.gpuInstanceId());
     }
 
     @Test

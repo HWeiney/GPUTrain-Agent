@@ -15,7 +15,7 @@ import com.ruoyi.train.runner.protocol.gpu.GpuSnapshot;
 final class NvidiaSmiCsvParser
 {
     private static final int GPU_FIELDS = 8;
-    private static final int COMPUTE_FIELDS = 5;
+    private static final int COMPUTE_FIELDS = 4;
 
     private NvidiaSmiCsvParser() { }
 
@@ -34,9 +34,8 @@ final class NvidiaSmiCsvParser
             long pid = parseLong(fields[1], "pid");
             String name = fields[2];
             long usedMemory = parseLong(fields[3], "used_memory");
-            String instance = normalizeInstance(fields[4]);
             result.computeIfAbsent(gpuUuid, k -> new ArrayList<>())
-                    .add(new GpuProcessInfo(pid, name, usedMemory, instance));
+                    .add(new GpuProcessInfo(pid, name, usedMemory, null));
         }
         return result;
     }
@@ -122,9 +121,4 @@ final class NvidiaSmiCsvParser
         return value.toUpperCase(java.util.Locale.ROOT);
     }
 
-    private static String normalizeInstance(String value)
-    {
-        if (value.equals("[N/A]") || value.equals("N/A")) return null;
-        return value;
-    }
 }

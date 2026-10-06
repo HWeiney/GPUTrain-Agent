@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.Assumptions;
 
 /**
  * MySQL integration tests for lease atomicity (profile mysql-it).
@@ -44,7 +45,8 @@ class GpuLeaseConcurrencyMySqlIT
         }
         catch (SQLException failure)
         {
-            throw new org.opentest4j.TestAbortedException("MySQL not reachable: " + failure.getMessage());
+            conn = null;
+            return;
         }
         gpu1 = "GPU-" + tag + "-1";
         gpu2 = "GPU-" + tag + "-2";
@@ -106,6 +108,7 @@ class GpuLeaseConcurrencyMySqlIT
     @Test
     void sequentialSecondActiveLeaseIsRejected() throws Exception
     {
+        assumeMySql();
         insertActive(gpu1, "s1", true);
         SQLException failure = assertThrows(SQLException.class, () -> insertActive(gpu1, "s2", true));
         assertTrue(failure.getSQLState().startsWith("23"), "expected integrity violation, got "
@@ -116,25 +119,55 @@ class GpuLeaseConcurrencyMySqlIT
     @Test
     void concurrentLeaseContestHasSingleWinner() throws Exception
     {
-        // First acquirer commits the single ACTIVE lease on the shared autocommit connection.
-        conn.setAutoCommit(true);
-        insertActive(conn, gpu5, "holder");
-        // A second acquirer acting while the lease is active must fail on the unique index.
-        SQLException rejected = assertThrows(SQLException.class, () ->
+        assumeMySql();
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger winners = new AtomicInteger();
+        AtomicInteger conflicts = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try
         {
-            try (Connection challenger = open())
+            List<? extends Future<?>> attempts = List.of("race-a", "race-b").stream().map(key -> pool.submit(() ->
             {
-                challenger.createStatement().execute("SET innodb_lock_wait_timeout=3");
-                insertActive(challenger, gpu5, "challenger");
-            }
-        });
-        assertTrue(rejected.getSQLState().startsWith("23"));
+                try (Connection contender = open())
+                {
+                    contender.setAutoCommit(false);
+                    contender.createStatement().execute("SET innodb_lock_wait_timeout=5");
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) throw new AssertionError("race did not start");
+                    insertActive(contender, gpu5, key);
+                    contender.commit();
+                    winners.incrementAndGet();
+                }
+                catch (SQLException failure)
+                {
+                    if (failure.getSQLState() != null && failure.getSQLState().startsWith("23"))
+                        conflicts.incrementAndGet();
+                    else throw new RuntimeException(failure);
+                }
+                catch (InterruptedException failure)
+                {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(failure);
+                }
+            })).toList();
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "both contenders must be ready");
+            start.countDown();
+            for (Future<?> attempt : attempts) attempt.get(10, TimeUnit.SECONDS);
+        }
+        finally
+        {
+            pool.shutdownNow();
+        }
+        assertEquals(1, winners.get(), "exactly one concurrent acquirer should commit");
+        assertEquals(1, conflicts.get(), "the other concurrent acquirer should hit the unique constraint");
         assertEquals(1, countActive(gpu5));
     }
 
     @Test
     void multiCardRollbackLeavesNoPartialLease() throws Exception
     {
+        assumeMySql();
         try (Connection c = open())
         {
             c.setAutoCommit(false);
@@ -149,6 +182,7 @@ class GpuLeaseConcurrencyMySqlIT
     @Test
     void releasedLeaseAllowsReLease() throws Exception
     {
+        assumeMySql();
         insertActive(gpu4, "r1", true);
         try (PreparedStatement release = conn.prepareStatement(
                 "UPDATE train_gpu_lease SET status='RELEASED', released_at=NOW(3), "
@@ -164,6 +198,7 @@ class GpuLeaseConcurrencyMySqlIT
     @Test
     void duplicateJobIdempotencyKeyRejected() throws Exception
     {
+        assumeMySql();
         insertActive(gpu3, "idem", true);
         SQLException failure = assertThrows(SQLException.class,
                 () -> insertActive(gpu3, "idem", true));
@@ -241,5 +276,10 @@ class GpuLeaseConcurrencyMySqlIT
             runner.executeUpdate();
         }
         conn.close();
+    }
+
+    private void assumeMySql()
+    {
+        Assumptions.assumeTrue(conn != null, "MySQL integration database is unavailable");
     }
 }

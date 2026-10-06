@@ -26,8 +26,15 @@ import com.ruoyi.train.runner.protocol.ProcessSpec;
 public record JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
         Set<String> allowedUuids, Set<String> deniedUuids, String requestKey,
         String workingDirectory, String executable, List<String> arguments,
-        Map<String, String> environment, long timeoutSeconds)
+        Map<String, String> environment, long timeoutSeconds,
+        long minFreeMemoryMiB, boolean allowExternalOccupancy)
 {
+    public JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
+            Set<String> allowedUuids, Set<String> deniedUuids, String requestKey,
+            String workingDirectory, String executable, List<String> arguments,
+            Map<String, String> environment, long timeoutSeconds)
+    { this(ownerUserId, gpuCount, minMemoryMiB, allowedUuids, deniedUuids, requestKey,
+            workingDirectory, executable, arguments, environment, timeoutSeconds, 0, false); }
     /**
      * Builds the structured process specification for this job. The command idempotency
      * key is derived deterministically from the request key so retries never produce a

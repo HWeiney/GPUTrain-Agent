@@ -7,7 +7,7 @@
             <arg column="job_uuid" javaType="java.lang.String"/>
             <arg column="owner_user_id" javaType="java.lang.Long"/>
             <arg column="runner_id" javaType="java.lang.Long"/>
-            <arg column="gpu_count" javaType="int"/>
+            <arg column="gpu_count" javaType="_int"/>
             <arg column="min_memory_mib" javaType="_long"/>
             <arg column="allowed_gpu_uuids" javaType="java.lang.String"/>
             <arg column="denied_gpu_uuids" javaType="java.lang.String"/>
@@ -41,6 +41,13 @@
         SELECT * FROM train_job WHERE request_key = #{requestKey}
     </select>
 
+    <select id="findByCommandUuid" resultMap="JobResult">
+        SELECT j.* FROM train_job j
+        JOIN train_runner_command c ON c.command_uuid = #{commandUuid}
+        WHERE j.start_command_id = c.command_id OR j.stop_command_id = c.command_id
+        LIMIT 1
+    </select>
+
     <select id="listByOwner" resultMap="JobResult">
         SELECT * FROM train_job
         <where>
@@ -60,6 +67,7 @@
     <update id="attachStartCommand">
         UPDATE train_job
         SET runner_id = #{runnerId}, start_command_id = #{startCommandId},
+            process_spec_json = CAST(#{processSpecJson} AS JSON),
             status = 'STARTING', updated_at = #{updatedAt}
         WHERE job_id = #{jobId}
     </update>

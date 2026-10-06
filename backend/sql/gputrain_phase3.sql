@@ -1,5 +1,18 @@
 SET NAMES utf8mb4;
 
+-- Bind each registered Runner to the user who created its one-time enrollment.
+-- Existing unowned Runner rows stay NULL and are therefore not schedulable.
+SET @owner_ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'train_runner'
+       AND COLUMN_NAME = 'owner_user_id') = 0,
+    'ALTER TABLE train_runner ADD COLUMN owner_user_id BIGINT NULL AFTER runner_id',
+    'SELECT 1'
+);
+PREPARE owner_stmt FROM @owner_ddl;
+EXECUTE owner_stmt;
+DEALLOCATE PREPARE owner_stmt;
+
 -- Canonical physical GPU device keyed by NVIDIA GPU UUID.
 CREATE TABLE IF NOT EXISTS train_gpu_device (
     device_id BIGINT NOT NULL AUTO_INCREMENT,

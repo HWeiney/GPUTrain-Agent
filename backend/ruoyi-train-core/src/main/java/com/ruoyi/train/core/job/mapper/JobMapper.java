@@ -17,6 +17,8 @@ public interface JobMapper
 
     JobRecord findByRequestKey(@Param("requestKey") String requestKey);
 
+    JobRecord findByCommandUuid(@Param("commandUuid") String commandUuid);
+
     /** Lists jobs for the data scope; admins see all, others only their own jobs. */
     List<JobRecord> listByOwner(@Param("ownerUserId") Long ownerUserId,
             @Param("isAdmin") boolean isAdmin);
@@ -36,6 +38,7 @@ public interface JobMapper
     int attachStartCommand(@Param("jobId") long jobId,
             @Param("runnerId") long runnerId,
             @Param("startCommandId") long startCommandId,
+            @Param("processSpecJson") String processSpecJson,
             @Param("updatedAt") Instant updatedAt);
 
     /**

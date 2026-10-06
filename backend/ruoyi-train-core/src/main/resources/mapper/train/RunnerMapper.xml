@@ -4,6 +4,7 @@
     <resultMap id="RunnerResult" type="com.ruoyi.train.core.runner.domain.RunnerRecord">
         <constructor>
             <idArg column="runner_id" javaType="java.lang.Long"/>
+            <arg column="owner_user_id" javaType="java.lang.Long"/>
             <arg column="runner_name" javaType="java.lang.String"/>
             <arg column="linux_username" javaType="java.lang.String"/>
             <arg column="allowed_root" javaType="java.lang.String"/>
@@ -17,10 +18,10 @@
 
     <insert id="insert" parameterType="com.ruoyi.train.core.runner.domain.RunnerRecord">
         INSERT INTO train_runner
-            (runner_name, linux_username, allowed_root, secret_ciphertext, status,
+            (owner_user_id, runner_name, linux_username, allowed_root, secret_ciphertext, status,
              last_seen_at, created_at, updated_at)
         VALUES
-            (#{runnerName}, #{linuxUsername}, #{allowedRoot}, #{secretCiphertext}, #{status},
+            (#{ownerUserId}, #{runnerName}, #{linuxUsername}, #{allowedRoot}, #{secretCiphertext}, #{status},
              #{lastSeenAt}, #{createdAt}, #{updatedAt})
     </insert>
 

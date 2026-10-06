@@ -13,6 +13,10 @@ import com.ruoyi.train.core.gpu.domain.DeviceIdentityState;
  * @param identityState derived device identity state
  */
 public record GpuAllocationCandidate(String gpuUuid, String hostSignature, long totalMemoryMiB,
-        boolean schedulable, boolean fresh, DeviceIdentityState identityState)
+        long usedMemoryMiB,
+        boolean schedulable, boolean fresh, DeviceIdentityState identityState, long runnerId)
 {
+    public GpuAllocationCandidate(String gpuUuid, String hostSignature, long totalMemoryMiB,
+            boolean schedulable, boolean fresh, DeviceIdentityState identityState, long runnerId)
+    { this(gpuUuid, hostSignature, totalMemoryMiB, 0, schedulable, fresh, identityState, runnerId); }
 }

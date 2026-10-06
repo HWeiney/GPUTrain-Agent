@@ -23,7 +23,7 @@ public final class NvidiaSmiGpuDiscovery implements GpuDiscovery
     private static final String GPU_QUERY =
             "gpu_uuid,name,index,memory.total,memory.used,utilization.gpu,mig.mode.current,driver_version";
     private static final String COMPUTE_QUERY =
-            "gpu_uuid,pid,process_name,used_memory,gpu_instance_id";
+            "gpu_uuid,pid,process_name,used_memory";
     private static final String FORMAT = "csv,noheader,nounits";
 
     private final String runnerId;

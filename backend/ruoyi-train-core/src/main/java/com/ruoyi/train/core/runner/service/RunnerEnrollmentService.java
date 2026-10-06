@@ -134,7 +134,7 @@ public class RunnerEnrollmentService
         random.nextBytes(secretBytes);
         String secret = Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes);
         String ciphertext = credentialCipher.encrypt(secret.getBytes(StandardCharsets.UTF_8));
-        RunnerRecord runner = new RunnerRecord(null, enrollment.runnerName(), enrollment.linuxUsername(),
+        RunnerRecord runner = new RunnerRecord(null, enrollment.ownerUserId(), enrollment.runnerName(), enrollment.linuxUsername(),
                 enrollment.allowedRoot(), ciphertext, "ACTIVE", now, now, now);
         if (runnerMapper.insert(runner) != 1)
             throw new IllegalStateException("Unable to create Runner");

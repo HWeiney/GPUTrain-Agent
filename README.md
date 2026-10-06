@@ -2,7 +2,7 @@
 
 面向一台由团队共享的多 GPU 服务器的训练实验管理与智能诊断平台。控制面基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript；训练任务计划由每个 Linux 账户下的原生 Runner 执行，以保留用户文件权限、Conda 环境和 CUDA 工具链。
 
-阶段一工程基础、阶段二用户级 Runner 与阶段三 GPU 调度（GPU 发现、原子租约、任务状态机）代码已实现。阶段二已在 Linux 目标机完成 fixture 级验收；阶段三的后端与确定性测试已在本地完成，真实 GPU 验收需在带 NVIDIA GPU 的目标机执行。日志/SSE/指标告警、Qwen Agent 与 MCP 仍属于后续阶段。
+阶段一工程基础、阶段二用户级 Runner 与阶段三 GPU 调度（GPU 发现、原子租约、任务状态机）代码已实现。阶段三已在 Linux H20 目标机完成真实 GPU 发现与 DocOwl2-SRFUND 1-step 训练短测：任务 `jobId=5` 成功，checkpoint 写出，任务租约释放。日志/SSE/指标告警、Qwen Agent 与 MCP 仍属于后续阶段。
 
 ## 模块
 
@@ -90,11 +90,11 @@ mvn -f backend/pom.xml clean package
 
 ## GPU 调度（阶段三）
 
-Runner 通过固定参数数组（不使用 Shell）调用 `nvidia-smi`，周期上报其用户可见的 GPU 快照；控制面用 GPU UUID（而非易变的 ordinal）作为持久身份，校验快照的范围、数量与新鲜度，并保守处理外部进程与身份冲突。
+Runner 通过固定参数数组（不使用 Shell）调用 `nvidia-smi`，周期上报其用户可见的 GPU 快照；控制面用 GPU UUID（而非易变的 ordinal）作为持久身份，校验快照的范围、数量与新鲜度，并保守处理外部进程与身份冲突。固定共享 GPU profile 可在身份明确、快照新鲜且空闲显存达到 profile 门槛时调度被其他进程占用的整卡；调度器不会终止外部进程。
 
-任务提交后，控制面在单个数据库事务内原子分配满足约束的 GPU：生成列唯一约束 `uk_active_gpu` 保证同一 GPU 任一时刻最多一个 ACTIVE 租约；多卡请求要么全得、要么整事务回滚。任务、命令、租约与进程通过 `job_id` 稳定关联，任务状态机（PENDING/QUEUED/ALLOCATING/ALLOCATED/STARTING/RUNNING/SUCCEEDED/FAILED/STOPPING/STOPPED/QUARANTINED/CANCELED）驱动开始、成功、失败、停止与恢复。
+任务提交后，控制面在单个数据库事务内原子分配满足约束的 GPU：生成列唯一约束 `uk_active_gpu` 保证同一 GPU 任一时刻最多一个 ACTIVE 租约；多卡请求要么全得、要么整事务回滚。控制面根据租约 UUID 注入 Runner 命令的 `CUDA_VISIBLE_DEVICES`，并拒绝客户端覆盖；Runner 配置须将它加入 `environmentAllowlist`。Runner 的命令回报与进程对账会同步任务状态，确认成功/失败/停止后按任务释放租约；停止失败则隔离任务并保留租约。任务、命令、租约与进程通过 `job_id` 稳定关联，任务状态机（PENDING/QUEUED/ALLOCATING/ALLOCATED/STARTING/RUNNING/SUCCEEDED/FAILED/STOPPING/STOPPED/QUARANTINED/CANCELED）驱动开始、成功、失败、停止与恢复。
 
-关键安全规则：外部进程占用、MIG 开启（阶段三不支持 MIG）、快照过期、Runner 离线或身份不确定时一律 fail closed；过期租约不自动等于空闲，必须重新探测并核对进程，否则进入隔离。本地开发机无 NVIDIA GPU，真实 GPU 验收步骤见 `docs/verification/phase-3-gpu-scheduling.md`。
+关键安全规则：Runner 注册时绑定创建 enrollment 的用户；任务只会分配给该用户拥有且在线的 Runner 所观察到的 GPU。旧 Runner 的所有者未知时保持不可调度，需先确认归属再绑定。共享 profile 仍拒绝 MIG（阶段三不支持）、过期快照、Runner 离线或身份不确定的 GPU；过期租约不自动等于空闲，必须重新探测并核对进程，否则进入隔离。本地开发机无 NVIDIA GPU；Linux H20 目标机已完成 1-step 真实训练短测，证据见 `docs/verification/phase-3-gpu-scheduling.md`。
 
 ## 启动前端
 
@@ -118,4 +118,4 @@ git diff --check
 
 管理员可以看到 `GPUTrain / 训练工作台` 并访问 `GET /train/overview`；未授权用户既看不到菜单，直接请求接口也会被拒绝。
 
-完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。阶段二本地证据与远程待验项目见 `docs/verification/phase-2-runner.md`。阶段三验收证据与真实 GPU 待验步骤见 `docs/verification/phase-3-gpu-scheduling.md`。
+完整设计见 `docs/superpowers/specs/2026-10-02-gputrain-agent-design.md`，阶段路线图见 `docs/superpowers/plans/2026-10-02-gputrain-agent-roadmap.md`，阶段一验收证据见 `docs/verification/phase-1-foundation.md`。阶段二本地证据与远程待验项目见 `docs/verification/phase-2-runner.md`。阶段三验收与真实 GPU 训练短测证据见 `docs/verification/phase-3-gpu-scheduling.md`。

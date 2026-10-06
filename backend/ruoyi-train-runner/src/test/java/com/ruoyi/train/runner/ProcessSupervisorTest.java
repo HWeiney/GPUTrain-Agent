@@ -46,7 +46,8 @@ class ProcessSupervisorTest
             UUID id = UUID.randomUUID(); var started = supervisor.start(id, spec);
             assertTrue(ProcessLookup.system().find(started.pid()).orElseThrow().alive());
             assertTimeoutPreemptively(Duration.ofSeconds(8), () -> { while (supervisor.observe(id).status() == RunnerProcessStatus.RUNNING) Thread.sleep(20); });
-            assertEquals(RunnerProcessStatus.STOPPED, supervisor.stop(id).status());
+            assertEquals(RunnerProcessStatus.FAILED, supervisor.stop(id).status());
+            assertEquals(RunnerErrorCode.PROCESS_TIMEOUT, supervisor.observe(id).errorCode());
             assertEquals(supervisor.stop(id), supervisor.stop(id));
             assertFalse(ProcessHandle.of(started.pid()).map(ProcessHandle::isAlive).orElse(false));
         }

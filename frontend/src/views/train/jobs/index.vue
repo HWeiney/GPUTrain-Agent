@@ -4,7 +4,7 @@
       <div>
         <p class="page-kicker">TRAINING JOBS</p>
         <h1>训练任务</h1>
-        <p class="page-summary">提交受限 fixture，原子分配 GPU 并跟踪任务状态。</p>
+        <p class="page-summary">运行固定 DocOwl2-SRFUND 短测配置，自动选择显存余量足够的设备。</p>
       </div>
       <div class="header-actions">
         <el-button @click="load">刷新</el-button>
@@ -45,23 +45,9 @@
 
     <el-dialog v-model="creating" title="新建训练任务" width="560px">
       <el-form ref="formRef" :model="form" label-width="110px">
-        <el-form-item label="GPU 数" required>
-          <el-input-number v-model="form.gpuCount" :min="1" :max="8" />
-        </el-form-item>
-        <el-form-item label="单卡显存(MiB)" required>
-          <el-input-number v-model="form.minMemoryMiB" :min="1024" :step="1024" />
-        </el-form-item>
-        <el-form-item label="工作目录" required>
-          <el-input v-model="form.workingDirectory" placeholder="必须在 Runner 允许目录内" />
-        </el-form-item>
-        <el-form-item label="可执行文件" required>
-          <el-input v-model="form.executable" />
-        </el-form-item>
-        <el-form-item label="参数">
-          <el-input v-model="argumentsText" placeholder="空格分隔，按参数向量传递" />
-        </el-form-item>
-        <el-form-item label="超时(秒)">
-          <el-input-number v-model="form.timeoutSeconds" :min="10" :step="10" />
+        <el-form-item label="训练配置"><el-input model-value="DocOwl2-SRFUND（3 卡，共享调度）" disabled /></el-form-item>
+        <el-form-item label="最大步数" required>
+          <el-input-number v-model="form.maxSteps" :min="1" :max="5" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -86,22 +72,14 @@ const loading = ref(false)
 const jobs = ref<TrainJob[]>([])
 const creating = ref(false)
 const submitting = ref(false)
-const argumentsText = ref('')
 const formRef = ref()
 
 const TERMINAL = ['SUCCEEDED', 'FAILED', 'STOPPED', 'CANCELED']
 
 const form = reactive<CreateTrainJobRequest>({
-  gpuCount: 1,
-  minMemoryMiB: 8000,
-  allowedGpuUuids: null,
-  deniedGpuUuids: null,
-  requestKey: '',
-  workingDirectory: '/data/fixtures',
-  executable: 'python3',
-  arguments: [],
-  environment: {},
-  timeoutSeconds: 300
+  profileId: 'docowl2-srfund',
+  maxSteps: 1,
+  requestKey: ''
 })
 
 function isTerminal(status: string): boolean {
@@ -128,7 +106,7 @@ function formatTime(value: string): string {
 
 function openCreate() {
   form.requestKey = 'req-' + Date.now()
-  argumentsText.value = ''
+  form.maxSteps = 1
   creating.value = true
 }
 
@@ -145,9 +123,6 @@ async function load() {
 }
 
 async function submit() {
-  form.arguments = argumentsText.value.trim()
-    ? argumentsText.value.trim().split(/\s+/)
-    : []
   submitting.value = true
   try {
     await createTrainJob({ ...form })

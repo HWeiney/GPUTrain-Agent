@@ -38,12 +38,23 @@ public class JobAdminController
     public AjaxResult create(@RequestBody CreateJobRequest request)
     {
         long owner = SecurityUtils.getUserId();
-        JobSubmission submission = new JobSubmission(owner, request.gpuCount(),
-                request.minMemoryMiB(), setOrEmpty(request.allowedGpuUuids()),
-                setOrEmpty(request.deniedGpuUuids()), request.requestKey(),
-                request.workingDirectory(), request.executable(),
-                listOrEmpty(request.arguments()),
-                mapOrEmpty(request.environment()), request.timeoutSeconds());
+        if (!"docowl2-srfund".equals(request.profileId()))
+            throw new IllegalArgumentException("Unknown training profile");
+        if (request.maxSteps() < 1 || request.maxSteps() > 5)
+            throw new IllegalArgumentException("Short smoke test maxSteps must be between 1 and 5");
+        if (request.requestKey() == null || request.requestKey().isBlank())
+            throw new IllegalArgumentException("requestKey is required");
+        Map<String, String> environment = Map.of(
+                "MODEL_PATH", "/model/hanw/ms-swift-imp3-research/pretrained-imp/DocOwl2",
+                "PYTHON_BIN", "/home/hanw/.conda/envs/swift/bin/python",
+                "NPROC_PER_NODE", "3", "MAX_STEPS", Integer.toString(request.maxSteps()),
+                "RUN_MODE", "foreground", "AUTO_EVAL", "False", "TRAIN_EVAL_STRATEGY", "no",
+                "RUN_ID", "gputrain-" + request.requestKey());
+        JobSubmission submission = new JobSubmission(owner, 3, 0, Set.of(), Set.of(), request.requestKey(),
+                "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
+                List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
+                        "/model/hanw/ms-swift-imp3-research/configs/ocr_evidence/docowl2_srfund.env"),
+                environment, 3600, 70000, true);
         JobRecord job = jobService.submit(submission, Instant.now());
         return AjaxResult.success(job);
     }
@@ -74,26 +85,7 @@ public class JobAdminController
         return AjaxResult.success(jobService.stop(jobId, Instant.now()));
     }
 
-    private static Set<String> setOrEmpty(Set<String> values)
-    {
-        return values == null ? Set.of() : Set.copyOf(values);
-    }
-
-    private static List<String> listOrEmpty(List<String> values)
-    {
-        return values == null ? List.of() : List.copyOf(values);
-    }
-
-    private static Map<String, String> mapOrEmpty(Map<String, String> values)
-    {
-        return values == null ? Map.of() : Map.copyOf(values);
-    }
-
-    public record CreateJobRequest(int gpuCount, long minMemoryMiB,
-            Set<String> allowedGpuUuids, Set<String> deniedGpuUuids,
-            String requestKey, String workingDirectory, String executable,
-            List<String> arguments, Map<String, String> environment,
-            long timeoutSeconds)
+    public record CreateJobRequest(String profileId, int maxSteps, String requestKey)
     {
     }
 }

@@ -3,6 +3,14 @@
 基线：`5d8160e7`（阶段二已验收）。设计：`docs/superpowers/specs/2026-10-05-gputrain-agent-phase-3-gpu-scheduling-design.md`。
 工作分支：`feature/phase-3-gpu`（worktree `.worktrees/phase-3-gpu`）。
 
+## 执行状态（2026-10-06）
+
+**阶段三完成。** 控制面、Runner 与前端 profile 已实现并部署到 Linux H20 目标机；真实 GPU 快照正常，固定 DocOwl2-SRFUND profile 以 3 卡运行 1 step，任务 `jobId=5` 为 `SUCCEEDED`，`checkpoint-1` 已写出且本任务租约已释放。核心/Runner/协议测试分别为 161/61/20 项通过，前端 5 项测试和生产构建通过。
+
+执行中补充了固定安全 profile、按实时空闲显存调度共享 GPU、超时/停止的进程树清理，以及 stop 与迟到 RUNNING 报告的竞态修复。首轮 job `4` 在训练 step 后进入长验证；取消时恰逢 Runner 重启，状态进入 `QUARANTINED`，其租约继续保留，需后续安全重探测后回收。MySQL 专项集成测试未在最终变更后重跑；这些限制均已写入验收记录，不改变成功短测的结果。
+
+下一阶段按路线图进入**阶段四：日志、指标、告警与检查点展示**。
+
 ## 规则
 
 - 每个切片：**先写失败测试 → 跑红 → 最小实现 → 跑绿 → 差异走读 → 提交**。
