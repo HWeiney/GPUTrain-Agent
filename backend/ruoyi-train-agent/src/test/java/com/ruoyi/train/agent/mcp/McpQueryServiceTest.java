@@ -38,7 +38,7 @@ class McpQueryServiceTest
     void listIsScopedAndDoesNotExposeExecutionSecrets()
     {
         JobMapper mapper = mock(JobMapper.class);
-        when(mapper.listByOwner(100L, false)).thenReturn(List.of(job(9, 100)));
+        when(mapper.listByOwner(100L, false, 100, null)).thenReturn(List.of(job(9, 100)));
         JobService jobs = jobs(mapper);
         McpQueryService queries = new McpQueryService(jobs, mock(JobObservabilityService.class));
 
@@ -46,7 +46,7 @@ class McpQueryServiceTest
 
         assertEquals(9L, result.get(0).get("jobId"));
         assertFalse(result.get(0).containsKey("processSpecJson"));
-        verify(mapper).listByOwner(100L, false);
+        verify(mapper).listByOwner(100L, false, 100, null);
     }
 
     @Test

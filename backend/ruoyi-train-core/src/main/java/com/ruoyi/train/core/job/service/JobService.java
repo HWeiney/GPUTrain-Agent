@@ -161,6 +161,21 @@ public class JobService
         return jobMapper.findById(jobId);
     }
 
+    @Transactional
+    public JobRecord cancel(long jobId, Instant now)
+    {
+        JobRecord job = requireJob(jobId);
+        JobStatus status = JobStatus.valueOf(job.status());
+        if (status == JobStatus.CANCELED) return job;
+        if ((status != JobStatus.PENDING && status != JobStatus.QUEUED)
+                || job.startCommandId() != null)
+            throw new IllegalStateException("Job can no longer be canceled; refresh its status");
+        JobStateMachine.requireTransition(status, JobStatus.CANCELED);
+        if (jobMapper.compareAndSetStatus(jobId, status.name(), JobStatus.CANCELED.name(), now) != 1)
+            throw new IllegalStateException("Job status changed; refresh and retry");
+        return jobMapper.findById(jobId);
+    }
+
     /**
      * Put a job into the safe QUARANTINED state because the control plane cannot prove
      * its device is safe. Active leases are deliberately not released, so the GPU cannot
@@ -168,7 +183,14 @@ public class JobService
      */
     public List<JobRecord> list(long userId, boolean isAdmin)
     {
-        return jobMapper.listByOwner(userId, isAdmin);
+        return list(userId, isAdmin, 50, null);
+    }
+
+    public List<JobRecord> list(long userId, boolean isAdmin, int limit, Long beforeJobId)
+    {
+        if (limit < 1 || limit > 100 || (beforeJobId != null && beforeJobId <= 0))
+            throw new IllegalArgumentException("Invalid job list cursor or limit");
+        return jobMapper.listByOwner(userId, isAdmin, limit, beforeJobId);
     }
 
     /**

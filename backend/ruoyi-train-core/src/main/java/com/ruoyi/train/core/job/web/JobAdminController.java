@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.utils.SecurityUtils;
@@ -71,10 +72,11 @@ public class JobAdminController
 
     @PreAuthorize("@ss.hasPermi('train:job:view')")
     @GetMapping
-    public AjaxResult list()
+    public AjaxResult list(@RequestParam(defaultValue = "50") int limit,
+            @RequestParam(required = false) Long beforeJobId)
     {
         long userId = SecurityUtils.getUserId();
-        return AjaxResult.success(jobService.list(userId, SecurityUtils.isAdmin(userId)));
+        return AjaxResult.success(jobService.list(userId, SecurityUtils.isAdmin(userId), limit, beforeJobId));
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:view')")
@@ -93,6 +95,15 @@ public class JobAdminController
         long userId = SecurityUtils.getUserId();
         jobService.getOwned(jobId, userId, SecurityUtils.isAdmin(userId));
         return AjaxResult.success(jobService.stop(jobId, Instant.now()));
+    }
+
+    @PreAuthorize("@ss.hasPermi('train:job:manage')")
+    @PostMapping("/{jobId}/cancel")
+    public AjaxResult cancel(@PathVariable long jobId)
+    {
+        long userId = SecurityUtils.getUserId();
+        jobService.getOwned(jobId, userId, SecurityUtils.isAdmin(userId));
+        return AjaxResult.success(jobService.cancel(jobId, Instant.now()));
     }
 
     public record CreateJobRequest(String profileId, int maxSteps, String requestKey, Set<String> allowedGpuUuids)

@@ -54,8 +54,12 @@
             <if test="!isAdmin">
                 owner_user_id = #{ownerUserId}
             </if>
+            <if test="beforeJobId != null">
+                AND job_id &lt; #{beforeJobId}
+            </if>
         </where>
-        ORDER BY created_at DESC
+        ORDER BY job_id DESC
+        LIMIT #{limit}
     </select>
 
     <select id="countActive" resultType="int">

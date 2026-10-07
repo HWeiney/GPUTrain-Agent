@@ -21,7 +21,7 @@ public class McpQueryService
 
     public List<Map<String, Object>> listMyExperiments(long userId)
     {
-        return jobs.list(userId, false).stream().limit(100).map(McpQueryService::safeSummary).toList();
+        return jobs.list(userId, false, 100, null).stream().map(McpQueryService::safeSummary).toList();
     }
 
     public Map<String, Object> getMyExperiment(long userId, long jobId)

@@ -184,6 +184,41 @@ class JobServiceTest
     }
 
     @Test
+    void queuedJobCanBeCanceledWithoutIssuingRunnerCommand()
+    {
+        JobRecord queued = new JobRecord(null, "queued-uuid", 10L, null, 3, 0L,
+                "[]", "[]", "{}", "QUEUED", "req-queued", null, null, NOW, NOW);
+        jobMapper.insert(queued);
+        long id = jobMapper.findByRequestKey("req-queued").jobId();
+
+        assertEquals("CANCELED", service.cancel(id, NOW).status());
+        assertEquals("CANCELED", service.cancel(id, NOW).status());
+        assertEquals(0, commandService.stopCalls);
+    }
+
+    @Test
+    void allocatedJobCannotBeCanceledAsQueued()
+    {
+        JobRecord running = service.submit(submission("req-running-cancel", 1), NOW);
+        assertThrows(IllegalStateException.class, () -> service.cancel(running.jobId(), NOW));
+        assertEquals("STARTING", jobMapper.findById(running.jobId()).status());
+    }
+
+    @Test
+    void listsJobsInBoundedPagesWithoutRepeats()
+    {
+        for (int i = 0; i < 55; i++)
+            jobMapper.insert(new JobRecord(null, "uuid-" + i, 10L, null, 3, 0L,
+                    "[]", "[]", "{}", "CANCELED", "key-" + i, null, null, NOW, NOW));
+        List<JobRecord> first = service.list(10L, false, 50, null);
+        List<JobRecord> second = service.list(10L, false, 50, first.get(first.size() - 1).jobId());
+        assertEquals(50, first.size());
+        assertEquals(5, second.size());
+        assertEquals(55L, first.get(0).jobId());
+        assertEquals(5L, second.get(0).jobId());
+    }
+
+    @Test
     void quarantineKeepsLeasesAndBlocksDispatch()
     {
         JobRecord job = service.submit(submission("req-8", 1), NOW);
@@ -258,11 +293,13 @@ class JobServiceTest
         }
 
         @Override
-        public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin)
+        public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin, int limit, Long beforeJobId)
         {
             return store.values().stream()
                     .filter(j -> isAdmin || j.ownerUserId().equals(ownerUserId))
-                    .toList();
+                    .filter(j -> beforeJobId == null || j.jobId() < beforeJobId)
+                    .sorted((a, b) -> Long.compare(b.jobId(), a.jobId()))
+                    .limit(limit).toList();
         }
 
         @Override

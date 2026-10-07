@@ -21,7 +21,8 @@ public interface JobMapper
 
     /** Lists jobs for the data scope; admins see all, others only their own jobs. */
     List<JobRecord> listByOwner(@Param("ownerUserId") Long ownerUserId,
-            @Param("isAdmin") boolean isAdmin);
+            @Param("isAdmin") boolean isAdmin, @Param("limit") int limit,
+            @Param("beforeJobId") Long beforeJobId);
 
     int countActive(@Param("ownerUserId") Long ownerUserId, @Param("isAdmin") boolean isAdmin);
 

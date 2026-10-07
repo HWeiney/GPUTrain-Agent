@@ -110,6 +110,15 @@ class JobAdminControllerTest
     }
 
     @Test
+    void cancelRequiresManagePermission() throws NoSuchMethodException
+    {
+        Method endpoint = JobAdminController.class.getMethod("cancel", long.class);
+        PreAuthorize auth = endpoint.getAnnotation(PreAuthorize.class);
+        assertNotNull(auth);
+        assertEquals("@ss.hasPermi('train:job:manage')", auth.value());
+    }
+
+    @Test
     void createSubmissionCanRestrictTheGpuAllowlist()
     {
         Set<String> selected = Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
