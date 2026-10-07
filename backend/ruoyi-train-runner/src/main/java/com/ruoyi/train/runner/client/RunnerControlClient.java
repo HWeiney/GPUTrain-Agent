@@ -42,6 +42,19 @@ public final class RunnerControlClient
     public void reportGpuSnapshot(Object gpuReport) throws IOException, InterruptedException
     { send("POST", "/runner-api/v1/gpu-snapshots", gpuReport, true); }
 
+    public long logOffset(UUID commandId, RunnerLogStream stream) throws IOException, InterruptedException
+    {
+        byte[] response = send("GET", "/runner-api/v1/commands/" + commandId + "/logs/offset?stream=" + stream.name(), null, true);
+        try { return Long.parseLong(new String(response, java.nio.charset.StandardCharsets.UTF_8)); }
+        catch (NumberFormatException invalid) { throw new IOException("Invalid log offset response", invalid); }
+    }
+
+    public RunnerLogAck reportLog(RunnerLogChunk chunk) throws IOException, InterruptedException
+    {
+        byte[] response = send("POST", "/runner-api/v1/commands/" + chunk.commandId() + "/logs", chunk, true);
+        return json.readValue(response, RunnerLogAck.class);
+    }
+
     private byte[] send(String method, String path, Object value, boolean signed) throws IOException, InterruptedException
     {
         byte[] body = value == null ? new byte[0] : json.writeValueAsBytes(value);

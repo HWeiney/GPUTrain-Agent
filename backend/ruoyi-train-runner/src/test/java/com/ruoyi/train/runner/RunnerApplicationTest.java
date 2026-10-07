@@ -7,6 +7,7 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import com.sun.net.httpserver.HttpServer;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,7 +45,7 @@ class RunnerApplicationTest
         });
         server.createContext("/runner-api/v1/heartbeat", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
         server.createContext("/runner-api/v1/commands/poll", exchange -> reject(exchange, "RUNNER_AUTH_INVALID"));
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
@@ -85,7 +86,7 @@ class RunnerApplicationTest
         server.createContext("/runner-api/v1/commands/" + stopId + "/reports", exchange -> {
             exchange.getRequestBody().readAllBytes(); exchange.sendResponseHeaders(204, -1); exchange.close();
         });
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
@@ -160,7 +161,7 @@ class RunnerApplicationTest
             reports.add(json.readValue(exchange.getRequestBody(), RunnerCommandReport.class));
             exchange.sendResponseHeaders(204, -1); exchange.close();
         });
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,
@@ -205,7 +206,7 @@ class RunnerApplicationTest
             }
             else reject(exchange, "RUNNER_AUTH_INVALID");
         });
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID, assertThrows(RunnerProtocolException.class, app::run).code());
@@ -251,7 +252,7 @@ class RunnerApplicationTest
         server.createContext("/runner-api/v1/commands/poll", exchange -> {
             events.add("poll"); reject(exchange, "RUNNER_AUTH_INVALID");
         });
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertEquals(RunnerErrorCode.RUNNER_AUTH_INVALID,
@@ -290,7 +291,7 @@ class RunnerApplicationTest
             reports.incrementAndGet(); exchange.sendResponseHeaders(204, -1); exchange.close();
         });
         allowReconcile(server);
-        server.start();
+        startServer(server);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try (RunnerApplication app = application(server))
         {
@@ -312,7 +313,7 @@ class RunnerApplicationTest
             polls.incrementAndGet(); reject(exchange, "RUNNER_AUTH_INVALID");
         });
         allowReconcile(server);
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
@@ -338,7 +339,7 @@ class RunnerApplicationTest
             reports.incrementAndGet(); reject(exchange, "COMMAND_STATUS_CONFLICT");
         });
         allowReconcile(server);
-        server.start();
+        startServer(server);
         try (RunnerApplication app = application(server))
         {
             app.tick(); app.tick(); app.tick();
@@ -351,6 +352,53 @@ class RunnerApplicationTest
         Properties p = RunnerConfigTest.properties(root);
         p.setProperty("controlPlaneUrl", "http://127.0.0.1:" + server.getAddress().getPort());
         return new RunnerApplication(RunnerConfig.from(p));
+    }
+
+    private void startServer(HttpServer server) throws Exception
+    {
+        ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+        var offsets = new ConcurrentHashMap<String, AtomicLong>();
+        for (ManagedProcess process : new ProcessStateStore(root).loadAll())
+        {
+            for (String file : List.of(process.stdoutPath(), process.stderrPath()))
+            {
+                Path path = Path.of(file);
+                Files.createDirectories(path.getParent());
+                if (!Files.exists(path)) Files.createFile(path);
+            }
+        }
+        server.createContext("/runner-api/v1/commands/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String marker = "/logs/offset";
+            if ("GET".equals(exchange.getRequestMethod()) && path.endsWith(marker))
+            {
+                String commandId = path.substring("/runner-api/v1/commands/".length(), path.length() - marker.length());
+                String stream = Optional.ofNullable(exchange.getRequestURI().getQuery()).orElse("")
+                        .replaceFirst("^stream=", "");
+                long offset = offsets.computeIfAbsent(commandId + "/" + stream, ignored -> new AtomicLong()).get();
+                byte[] body = Long.toString(offset).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/logs"))
+            {
+                RunnerLogChunk chunk = json.readValue(exchange.getRequestBody(), RunnerLogChunk.class);
+                AtomicLong offset = offsets.computeIfAbsent(chunk.commandId() + "/" + chunk.stream(), ignored -> new AtomicLong());
+                if (offset.get() != chunk.offset()) { reject(exchange, "COMMAND_STATUS_CONFLICT"); return; }
+                offset.set(chunk.nextOffset());
+                byte[] body = json.writeValueAsBytes(new RunnerLogAck(offset.get(), true));
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
     }
     private static void reject(com.sun.net.httpserver.HttpExchange exchange, String code) throws java.io.IOException
     {
@@ -380,7 +428,7 @@ class RunnerApplicationTest
             exchange.sendResponseHeaders(attempts.getAndIncrement() == 0 ? 503 : 204, -1); exchange.close();
         });
         allowReconcile(server);
-        server.start();
+        startServer(server);
         try
         {
             Properties p = RunnerConfigTest.properties(root); p.setProperty("controlPlaneUrl", "http://127.0.0.1:" + server.getAddress().getPort());

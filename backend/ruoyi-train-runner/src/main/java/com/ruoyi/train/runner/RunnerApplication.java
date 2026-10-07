@@ -22,6 +22,7 @@ public final class RunnerApplication implements AutoCloseable
     private final ProcessPolicy policy;
     private final ProcessStateStore stateStore;
     private final ProcessSupervisor supervisor;
+    private final LogFileTailer logTailer;
     private final Map<UUID, RunnerCommandLease> active = new LinkedHashMap<>();
     private final Set<UUID> recoveredIds = new LinkedHashSet<>();
     private final Map<UUID, RunnerProcessSnapshot> reconciled = new HashMap<>();
@@ -43,6 +44,7 @@ public final class RunnerApplication implements AutoCloseable
         client = new RunnerControlClient(config);
         policy = new ProcessPolicy(config);
         stateStore = new ProcessStateStore(config.allowedRoot());
+        logTailer = new LogFileTailer(config.allowedRoot());
         supervisor = new ProcessSupervisor(stateStore, ProcessLookup.system());
         gpuDiscovery = new NvidiaSmiGpuDiscovery(config.runnerId(), config.nvidiaSmiPath(),
                 Duration.ofSeconds(10), 1024 * 1024, new ProcessBuilderCommandExecutor());
@@ -54,6 +56,7 @@ public final class RunnerApplication implements AutoCloseable
         client = new RunnerControlClient(config);
         policy = new ProcessPolicy(config);
         stateStore = new ProcessStateStore(config.allowedRoot());
+        logTailer = new LogFileTailer(config.allowedRoot());
         supervisor = new ProcessSupervisor(stateStore, ProcessLookup.system());
         this.gpuDiscovery = gpuDiscovery;
     }
@@ -151,6 +154,7 @@ public final class RunnerApplication implements AutoCloseable
             }
         }
         flushReports();
+        flushLogs();
         Optional<RunnerCommandLease> next = client.poll();
         synchronized (communicationGate)
         {
@@ -159,6 +163,25 @@ public final class RunnerApplication implements AutoCloseable
         }
         reconcileRecoveredChanges();
         flushReports();
+    }
+
+    private void flushLogs() throws IOException, InterruptedException
+    {
+        for (ManagedProcess process : stateStore.loadAll())
+        {
+            boolean terminal = process.status() != RunnerProcessStatus.RUNNING;
+            for (RunnerLogStream stream : RunnerLogStream.values())
+            {
+                long offset = client.logOffset(process.commandId(), stream);
+                if (offset < 0) continue;
+                Path path = Path.of(stream == RunnerLogStream.STDOUT ? process.stdoutPath() : process.stderrPath());
+                byte[] content = logTailer.read(path, offset, RunnerLogChunk.MAX_BYTES, terminal);
+                if (content.length == 0) continue;
+                RunnerLogAck ack = client.reportLog(new RunnerLogChunk(process.commandId(), stream, offset, content, terminal));
+                if (ack.nextOffset() != offset + content.length)
+                    throw new IOException("Control plane acknowledged an unexpected log offset");
+            }
+        }
     }
 
     private List<RunnerProcessSnapshot> currentRecoveredSnapshots()

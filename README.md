@@ -2,17 +2,17 @@
 
 面向一台由团队共享的多 GPU 服务器的训练实验管理与智能诊断平台。控制面基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript；训练任务计划由每个 Linux 账户下的原生 Runner 执行，以保留用户文件权限、Conda 环境和 CUDA 工具链。
 
-阶段一工程基础、阶段二用户级 Runner 与阶段三 GPU 调度（GPU 发现、原子租约、任务状态机）代码已实现。阶段三已在 Linux H20 目标机完成真实 GPU 发现与 DocOwl2-SRFUND 1-step 训练短测：任务 `jobId=5` 成功，checkpoint 写出，任务租约释放。日志/SSE/指标告警、Qwen Agent 与 MCP 仍属于后续阶段。
+阶段一到阶段七已有实现和实机验收证据。2026-10-07 在 Linux H20 目标机部署 MCP Streamable HTTP、验证双用户 owner 隔离/权限/审计，并通过 GPUTrain 托管 3 卡一步训练（job9：loss `3.98971343`、step runtime `26.9208s`、3 个日志块、132 项指标、12 个资源样本）；数据库备份、隔离恢复和临时权限清理均已完成。该结果是功能验收，不是长时间吞吐或模型质量评估。详见 `docs/verification/phase-7-deployment.md`。
 
 ## 模块
 
 | 模块 | 当前职责 |
 |---|---|
-| `ruoyi-train-core` | 总览、Runner 注册与认证、命令租约、状态上报、GPU 目录/原子租约/任务状态机 |
+| `ruoyi-train-core` | 总览、Runner 注册与认证、GPU 目录/原子租约/任务状态机，以及日志、指标与告警 API |
 | `ruoyi-train-runner-protocol` | 不依赖 Spring 的 Runner 协议与 HMAC 签名 |
 | `ruoyi-train-runner` | 独立 Java 17 可执行包，安全执行 fixture 并恢复本地进程状态 |
-| `ruoyi-train-monitor` | 监控边界，阶段一仅建立模块 |
-| `ruoyi-train-agent` | Agent 边界，阶段一不接入模型 |
+| `ruoyi-train-monitor` | 监控扩展边界；当前数据库与接口实现位于 core observability 包 |
+| `ruoyi-train-agent` | Planner、Diagnosis、Execution 契约、Qwen HTTP adapter、策略门和权限受控草案 API |
 
 后端保持模块化单体部署，避免在团队规模和流量尚不需要时引入微服务运维成本。
 
@@ -50,6 +50,9 @@ MySQL 首次创建数据目录时按照以下顺序执行初始化脚本：
 2. Quartz 表。
 3. GPUTrain 菜单与管理员授权。
 4. Runner 表、升级逻辑与管理权限。
+5. GPU 目录、租约与任务状态表。
+6. 日志游标、日志事件、指标和告警表。
+7. MCP 调用审计表。
 
 所有 SQL 文件显式执行 `SET NAMES utf8mb4`，避免 MySQL 客户端默认字符集导致中文被错误转码。
 
@@ -95,6 +98,22 @@ Runner 通过固定参数数组（不使用 Shell）调用 `nvidia-smi`，周期
 任务提交后，控制面在单个数据库事务内原子分配满足约束的 GPU：生成列唯一约束 `uk_active_gpu` 保证同一 GPU 任一时刻最多一个 ACTIVE 租约；多卡请求要么全得、要么整事务回滚。控制面根据租约 UUID 注入 Runner 命令的 `CUDA_VISIBLE_DEVICES`，并拒绝客户端覆盖；Runner 配置须将它加入 `environmentAllowlist`。Runner 的命令回报与进程对账会同步任务状态，确认成功/失败/停止后按任务释放租约；停止失败则隔离任务并保留租约。任务、命令、租约与进程通过 `job_id` 稳定关联，任务状态机（PENDING/QUEUED/ALLOCATING/ALLOCATED/STARTING/RUNNING/SUCCEEDED/FAILED/STOPPING/STOPPED/QUARANTINED/CANCELED）驱动开始、成功、失败、停止与恢复。
 
 关键安全规则：Runner 注册时绑定创建 enrollment 的用户；任务只会分配给该用户拥有且在线的 Runner 所观察到的 GPU。旧 Runner 的所有者未知时保持不可调度，需先确认归属再绑定。共享 profile 仍拒绝 MIG（阶段三不支持）、过期快照、Runner 离线或身份不确定的 GPU；过期租约不自动等于空闲，必须重新探测并核对进程，否则进入隔离。本地开发机无 NVIDIA GPU；Linux H20 目标机已完成 1-step 真实训练短测，证据见 `docs/verification/phase-3-gpu-scheduling.md`。
+
+## 日志、指标与告警（阶段四）
+
+Runner 按 stdout/stderr 文件分别读取 UTF-8 行边界内的有界字节块，通过 HMAC 接口查询控制面的确认 offset 并上传；控制面在事务中校验 Runner、job、stream 和连续 offset，同 offset 重试幂等。日志历史以数据库 event ID 排序，`GET /train/jobs/{jobId}/logs/stream` 支持 `Last-Event-ID` 恢复，读取接口每次校验任务归属。
+
+训练日志中的 `train_loss`、`learning_rate`、`epoch` 等数值被保存为历史指标；GPU 利用率和显存历史从任务租约期间的 Runner 快照关联。固定规则会为 CUDA OOM、NaN/Inf loss 与 NCCL 错误生成每任务去重的告警，不执行动作或模型调用。升级已有数据库需按阶段顺序执行 `backend/sql/gputrain_phase4.sql`；只在 MySQL 首次初始化的部署会自动执行 `06-gputrain-phase4.sql`。本地测试证据及目标机待办见 `docs/verification/phase-4-observability.md`。
+
+## Qwen 多 Agent 工作流（阶段五）
+
+Planner、Diagnosis 和 Execution 使用 schemaVersion 1 JSON 契约。Execution 只产出 `docowl2-srfund` 训练草案，策略校验权限、step 和 GPU 白名单并要求人工确认；模型没有工具调用、Runner、Shell 或文件系统能力。接口为 `POST /train/agents/plan`、`/diagnose` 和 `/execution-draft`，诊断会先校验任务 owner。配置 `gputrain.agent.qwen.api-key` 或环境变量 `DASHSCOPE_API_KEY`、`gputrain.agent.qwen.model` 和 `gputrain.agent.qwen.base-url` 后可请求兼容接口；默认模型为 `qwen3.8-27b`，无密钥时失败关闭。阶段五固定用例不访问真实模型、不创建训练任务。详细设计和验收记录分别见 `docs/superpowers/specs/2026-10-06-gputrain-agent-phase-5-qwen-workflow-design.md` 与 `docs/verification/phase-5-qwen-workflow.md`。
+
+阶段六在现有 Spring Boot 服务的 `/mcp` 提供 MCP Streamable HTTP，只接受现有 JWT 身份。工具白名单仅包含本人任务/实验列表、摘要、日志、指标、告警和 GPU 资源历史查询；管理员也按任务 owner 隔离。MCP 摘要不返回命令、进程配置或 request key，日志最多返回 100 条。`backend/sql/gputrain_phase6.sql` 创建只含调用者、工具、目标任务、结果码和时间的审计表；升级已有数据库需手工执行该脚本，首次初始化会通过 Compose 自动执行。详见 `docs/superpowers/specs/2026-10-06-gputrain-agent-phase-6-mcp-design.md` 和 `docs/verification/phase-6-mcp.md`。
+
+## 部署与恢复（阶段七）
+
+使用 `docs/operations/deployment-and-recovery.md` 执行预检、备份、数据库迁移、发布、回滚和 Runner 安全停机；初次运行 Compose 后按服务配置启动控制面和用户级 Runner。共享 GPU 时按任务配置与每卡可用显存阈值决定是否提交，不以利用率单独判断，并且不干预其他用户进程。`scripts/demo-phase7-mcp.sh` 仅查询 overview、MCP 工具目录和当前用户任务，不创建或停止任务。项目简历描述位于 `docs/project-summary/resume-copy.md`。本次目标服务只在 loopback 提供 HTTP；HTTPS 反向代理和 IDE 客户端实配未验收。
 
 ## 启动前端
 

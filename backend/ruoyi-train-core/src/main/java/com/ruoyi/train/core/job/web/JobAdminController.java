@@ -44,19 +44,29 @@ public class JobAdminController
             throw new IllegalArgumentException("Short smoke test maxSteps must be between 1 and 5");
         if (request.requestKey() == null || request.requestKey().isBlank())
             throw new IllegalArgumentException("requestKey is required");
+        JobSubmission submission = toSubmission(owner, request);
+        JobRecord job = jobService.submit(submission, Instant.now());
+        return AjaxResult.success(job);
+    }
+
+    static JobSubmission toSubmission(long owner, CreateJobRequest request)
+    {
+        Set<String> allowedUuids = request.allowedGpuUuids() == null
+                ? Set.of() : Set.copyOf(request.allowedGpuUuids());
+        if (!allowedUuids.isEmpty() && (allowedUuids.size() != 3
+                || allowedUuids.stream().anyMatch(uuid -> !uuid.matches("GPU-[A-Fa-f0-9-]+"))))
+            throw new IllegalArgumentException("GPU allowlist must contain exactly three GPU UUIDs");
         Map<String, String> environment = Map.of(
                 "MODEL_PATH", "/model/hanw/ms-swift-imp3-research/pretrained-imp/DocOwl2",
                 "PYTHON_BIN", "/home/hanw/.conda/envs/swift/bin/python",
                 "NPROC_PER_NODE", "3", "MAX_STEPS", Integer.toString(request.maxSteps()),
                 "RUN_MODE", "foreground", "AUTO_EVAL", "False", "TRAIN_EVAL_STRATEGY", "no",
                 "RUN_ID", "gputrain-" + request.requestKey());
-        JobSubmission submission = new JobSubmission(owner, 3, 0, Set.of(), Set.of(), request.requestKey(),
+        return new JobSubmission(owner, 3, 0, allowedUuids, Set.of(), request.requestKey(),
                 "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
                 List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
                         "/model/hanw/ms-swift-imp3-research/configs/ocr_evidence/docowl2_srfund.env"),
                 environment, 3600, 70000, true);
-        JobRecord job = jobService.submit(submission, Instant.now());
-        return AjaxResult.success(job);
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:view')")
@@ -85,7 +95,9 @@ public class JobAdminController
         return AjaxResult.success(jobService.stop(jobId, Instant.now()));
     }
 
-    public record CreateJobRequest(String profileId, int maxSteps, String requestKey)
+    public record CreateJobRequest(String profileId, int maxSteps, String requestKey, Set<String> allowedGpuUuids)
     {
+        public CreateJobRequest(String profileId, int maxSteps, String requestKey)
+        { this(profileId, maxSteps, requestKey, Set.of()); }
     }
 }

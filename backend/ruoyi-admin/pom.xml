@@ -60,6 +60,12 @@
             <artifactId>ruoyi-train-core</artifactId>
         </dependency>
 
+        <!-- GPUTrain multi-agent workflows -->
+        <dependency>
+            <groupId>com.ruoyi</groupId>
+            <artifactId>ruoyi-train-agent</artifactId>
+        </dependency>
+
         <!-- 单元测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

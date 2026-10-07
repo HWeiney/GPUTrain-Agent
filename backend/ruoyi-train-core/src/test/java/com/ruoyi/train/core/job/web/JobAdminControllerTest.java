@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.lang.reflect.Method;
 import java.time.Instant;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
 import com.ruoyi.train.core.job.domain.JobRecord;
 import com.ruoyi.train.core.job.service.JobService;
+import com.ruoyi.train.core.job.service.JobSubmission;
 
 class JobAdminControllerTest
 {
@@ -105,5 +107,26 @@ class JobAdminControllerTest
         PreAuthorize auth = endpoint.getAnnotation(PreAuthorize.class);
         assertNotNull(auth);
         assertEquals("@ss.hasPermi('train:job:manage')", auth.value());
+    }
+
+    @Test
+    void createSubmissionCanRestrictTheGpuAllowlist()
+    {
+        Set<String> selected = Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "GPU-cccccccc-cccc-cccc-cccc-cccccccccccc");
+        JobSubmission submission = JobAdminController.toSubmission(42L,
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke", selected));
+
+        assertEquals(selected, submission.allowedUuids());
+        assertEquals(3, submission.gpuCount());
+    }
+
+    @Test
+    void createSubmissionRejectsAnIncompleteGpuAllowlist()
+    {
+        assertThrows(IllegalArgumentException.class, () -> JobAdminController.toSubmission(42L,
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke",
+                        Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))));
     }
 }

@@ -98,6 +98,9 @@ public class SecurityConfig
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             // 注解标记允许匿名访问的url
             .authorizeHttpRequests((requests) -> {
+                // MCP is a servlet endpoint rather than an MVC controller, so apply the same
+                // job-view permission explicitly at the HTTP boundary.
+                requests.requestMatchers("/mcp").access(new McpPermissionAuthorizationManager());
                 permitAllUrl.getUrls().forEach(url -> requests.requestMatchers(url).permitAll());
                 // 对于登录login 注册register 验证码captchaImage 允许匿名访问
                 requests.requestMatchers("/login", "/register", "/captchaImage").permitAll()

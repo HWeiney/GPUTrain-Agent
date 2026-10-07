@@ -22,6 +22,7 @@ import org.springframework.web.context.request.async.DeferredResult;
 import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.train.core.gpu.service.GpuDeviceCatalogService;
 import com.ruoyi.train.core.job.service.JobService;
+import com.ruoyi.train.core.observability.JobObservabilityService;
 import com.ruoyi.train.core.runner.domain.RunnerCommandRecord;
 import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.core.runner.service.RunnerHeartbeatService;
@@ -29,6 +30,9 @@ import com.ruoyi.train.core.runner.service.RunnerReconciliationService;
 import com.ruoyi.train.runner.protocol.RunnerCommandLease;
 import com.ruoyi.train.runner.protocol.RunnerCommandReport;
 import com.ruoyi.train.runner.protocol.RunnerHeartbeat;
+import com.ruoyi.train.runner.protocol.RunnerLogAck;
+import com.ruoyi.train.runner.protocol.RunnerLogChunk;
+import com.ruoyi.train.runner.protocol.RunnerLogStream;
 import com.ruoyi.train.runner.protocol.RunnerProcessSnapshot;
 import com.ruoyi.train.runner.protocol.gpu.GpuDiscoveryReport;
 
@@ -42,13 +46,14 @@ public class RunnerApiController
     private final GpuDeviceCatalogService gpuCatalogService;
     private final ScheduledExecutorService scheduler;
     private final JobService jobService;
+    private final JobObservabilityService observability;
 
     @Autowired
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             RunnerReconciliationService reconciliationService,
             GpuDeviceCatalogService gpuCatalogService,
             @Qualifier("scheduledExecutorService") ScheduledExecutorService scheduler,
-            JobService jobService)
+            JobService jobService, JobObservabilityService observability)
     {
         this.heartbeatService = heartbeatService;
         this.commandService = commandService;
@@ -56,14 +61,20 @@ public class RunnerApiController
         this.gpuCatalogService = gpuCatalogService;
         this.scheduler = scheduler;
         this.jobService = jobService;
+        this.observability = observability;
     }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService)
-    { this(heartbeatService, null, null, null, null, null); }
+    { this(heartbeatService, null, null, null, null, null, null); }
 
     public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
             ScheduledExecutorService scheduler)
-    { this(heartbeatService, commandService, null, null, scheduler, null); }
+    { this(heartbeatService, commandService, null, null, scheduler, null, null); }
+
+    public RunnerApiController(RunnerHeartbeatService heartbeatService, RunnerCommandService commandService,
+            RunnerReconciliationService reconciliationService, GpuDeviceCatalogService gpuCatalogService,
+            ScheduledExecutorService scheduler, JobService jobService)
+    { this(heartbeatService, commandService, reconciliationService, gpuCatalogService, scheduler, jobService, null); }
 
     @Anonymous
     @PostMapping("/heartbeat")
@@ -132,6 +143,23 @@ public class RunnerApiController
             @RequestBody GpuDiscoveryReport report)
     {
         gpuCatalogService.ingest(runnerId, report, Instant.now());
+    }
+
+    @Anonymous
+    @GetMapping("/commands/{id}/logs/offset")
+    public long logOffset(@RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
+            @PathVariable UUID id, @RequestParam RunnerLogStream stream)
+    {
+        return observability.nextOffset(runnerId, id.toString(), stream);
+    }
+
+    @Anonymous
+    @PostMapping("/commands/{id}/logs")
+    public RunnerLogAck logChunk(@RequestAttribute(RunnerAuthenticationInterceptor.RUNNER_ID_ATTRIBUTE) String runnerId,
+            @PathVariable UUID id, @RequestBody RunnerLogChunk chunk)
+    {
+        if (!id.equals(chunk.commandId())) throw new IllegalArgumentException("Command ID mismatch");
+        return observability.ingest(runnerId, chunk);
     }
 
     private boolean tryLease(String runnerId, DeferredResult<ResponseEntity<RunnerCommandLease>> result,
