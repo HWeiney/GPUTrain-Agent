@@ -33,6 +33,11 @@
         SELECT * FROM train_runner WHERE runner_name = #{runnerName}
     </select>
 
+    <select id="listActiveForOwner" resultMap="RunnerResult">
+        SELECT * FROM train_runner WHERE status = 'ACTIVE'
+        <if test="!isAdmin">AND owner_user_id = #{ownerUserId}</if>
+    </select>
+
     <update id="updateHeartbeat">
         UPDATE train_runner
         SET last_seen_at = #{lastSeenAt}, updated_at = #{lastSeenAt}

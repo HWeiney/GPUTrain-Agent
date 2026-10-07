@@ -266,6 +266,15 @@ class JobServiceTest
         }
 
         @Override
+        public int countActive(Long ownerUserId, boolean isAdmin)
+        {
+            return (int) store.values().stream()
+                    .filter(j -> isAdmin || j.ownerUserId().equals(ownerUserId))
+                    .filter(j -> List.of("ALLOCATING", "ALLOCATED", "STARTING", "RUNNING", "STOPPING").contains(j.status()))
+                    .count();
+        }
+
+        @Override
         public int compareAndSetStatus(long jobId, String expected, String next, Instant updatedAt)
         {
             JobRecord current = store.get(jobId);

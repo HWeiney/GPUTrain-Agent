@@ -23,6 +23,8 @@ public interface JobMapper
     List<JobRecord> listByOwner(@Param("ownerUserId") Long ownerUserId,
             @Param("isAdmin") boolean isAdmin);
 
+    int countActive(@Param("ownerUserId") Long ownerUserId, @Param("isAdmin") boolean isAdmin);
+
     /**
      * Change the job status only when the current status matches {@code expectedStatus},
      * implementing a compare-and-set transition.

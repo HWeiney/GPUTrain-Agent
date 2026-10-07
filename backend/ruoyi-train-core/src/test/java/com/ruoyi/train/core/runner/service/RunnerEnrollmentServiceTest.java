@@ -289,6 +289,11 @@ class RunnerEnrollmentServiceTest
         {
             return values.values().stream().filter(r -> r.runnerName().equals(name)).findFirst().orElse(null);
         }
+        @Override public java.util.List<RunnerRecord> listActiveForOwner(Long ownerUserId, boolean isAdmin)
+        {
+            return values.values().stream().filter(r -> "ACTIVE".equals(r.status()))
+                    .filter(r -> isAdmin || ownerUserId.equals(r.ownerUserId())).toList();
+        }
         @Override public int updateHeartbeat(Long id, Instant at) { throw new UnsupportedOperationException(); }
     }
 

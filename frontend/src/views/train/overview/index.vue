@@ -12,7 +12,7 @@
       </button>
     </header>
 
-    <div class="status-rail" :class="{ 'is-ready': overview.status === 'READY' }" role="status">
+    <div class="status-rail" :class="{ 'is-ready': !failed && overview.status === 'READY' }" role="status">
       <span class="status-pulse" aria-hidden="true"></span>
       <span class="status-label">CONTROL PLANE</span>
       <strong>{{ statusText }}</strong>
@@ -61,7 +61,7 @@ const overview = ref<TrainOverview>({
   onlineRunners: 0
 })
 
-const statusText = computed(() => overview.value.status === 'READY' ? '运行正常' : '状态未知')
+const statusText = computed(() => failed.value ? '连接失败' : overview.value.status === 'READY' ? '数据已同步' : '状态未知')
 const cards = computed(() => [
   {
     key: 'status',
@@ -102,6 +102,7 @@ async function loadOverview() {
     }).format(new Date())
   } catch (error) {
     failed.value = true
+    overview.value = { status: 'UNKNOWN', activeExperiments: 0, onlineRunners: 0 }
     proxy?.$modal.msgError(error instanceof Error ? error.message : '训练总览加载失败')
   } finally {
     loading.value = false
