@@ -117,6 +117,11 @@ Planner、Diagnosis 和 Execution 使用 schemaVersion 1 JSON 契约。Execution
 
 ## 启动前端
 
+本机开发、后端部署在 GPU 服务器时，将 `frontend/.env.example` 复制为被 Git 忽略的
+`frontend/.env.local`，把 `GPUTRAIN_CONTROL_PLANE_URL` 改为服务器控制面的 HTTPS origin。
+本地 Vite 仍通过 `/dev-api` 代理请求。更换目标后需重启 Vite 并重新登录。
+远程 Runner 主动连接同一控制面；前端页面不直接 SSH 登录服务器。
+
 ```bash
 npm --prefix frontend install
 npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
