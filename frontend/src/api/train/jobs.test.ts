@@ -1,31 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
 import request from '@/utils/request'
-import { createTrainJob, getJobAlerts, getJobLogs, getJobMetrics, getJobResources, getTrainJob, listTrainJobs, stopTrainJob } from '@/api/train/jobs'
+import { cancelTrainJob, createTrainJob, getJobAlerts, getJobLogs, getJobMetrics, getJobResources, getTrainJob, listTrainJobs, stopTrainJob } from '@/api/train/jobs'
 
 vi.mock('@/utils/request', () => ({ default: vi.fn() }))
 
 describe('train jobs api', () => {
   it('requests the secured job list endpoint', () => {
-    listTrainJobs()
+    listTrainJobs(50)
 
     expect(request).toHaveBeenCalledWith({
       url: '/train/jobs',
-      method: 'get'
+      method: 'get',
+      params: { limit: 50 }
     })
   })
 
   it('posts a structured job creation request', () => {
     const payload = {
-      gpuCount: 1,
-      minMemoryMiB: 8000,
-      allowedGpuUuids: null,
-      deniedGpuUuids: null,
+      profileId: 'docowl2-srfund' as const,
+      maxSteps: 1,
+      allowedGpuUuids: ['GPU-a', 'GPU-b', 'GPU-c'],
       requestKey: 'req-1',
-      workingDirectory: '/data/fixtures',
-      executable: 'python3',
-      arguments: ['train.py'],
-      environment: {},
-      timeoutSeconds: 300
     }
 
     createTrainJob(payload)
@@ -44,6 +39,11 @@ describe('train jobs api', () => {
       url: '/train/jobs/7/stop',
       method: 'post'
     })
+  })
+
+  it('posts a cancel request for a queued job', () => {
+    cancelTrainJob(7)
+    expect(request).toHaveBeenCalledWith({ url: '/train/jobs/7/cancel', method: 'post' })
   })
 
   it('requests resumable log history from the last event ID', () => {

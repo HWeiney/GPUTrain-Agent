@@ -138,4 +138,11 @@ class JobAdminControllerTest
                 new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke",
                         Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))));
     }
+
+    @Test
+    void createSubmissionRequiresExplicitGpuSelection()
+    {
+        assertThrows(IllegalArgumentException.class, () -> JobAdminController.toSubmission(42L,
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke", Set.of())));
+    }
 }

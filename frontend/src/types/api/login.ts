@@ -15,6 +15,8 @@ export interface UserInfoResult extends AjaxResult {
   roles: string[]
   /** 权限数据 */
   permissions: string[]
+  /** Password character policy returned by /getInfo. */
+  pwdChrtype?: string
   /** 初始密码是否提醒修改 */
   isDefaultModifyPwd?: boolean
   /** 密码是否过期 */

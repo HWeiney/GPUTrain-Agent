@@ -4,12 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.reflect.Proxy;
-import java.time.Instant;
 import java.util.List;
+import java.util.stream.LongStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.RedisTemplate;
 import com.ruoyi.train.core.job.mapper.JobMapper;
-import com.ruoyi.train.core.runner.domain.RunnerRecord;
 import com.ruoyi.train.core.runner.mapper.RunnerMapper;
 
 class TrainOverviewServiceTest
@@ -18,9 +17,7 @@ class TrainOverviewServiceTest
     void countsVisibleActiveJobsAndOnlineRunners()
     {
         JobMapper jobs = mapper(JobMapper.class, 2);
-        RunnerMapper runners = mapper(RunnerMapper.class, List.of(
-                new RunnerRecord(1L, 42L, "one", "user", "/tmp", "secret", "ACTIVE", Instant.now(), Instant.now(), Instant.now()),
-                new RunnerRecord(2L, 42L, "two", "user", "/tmp", "secret", "ACTIVE", Instant.now(), Instant.now(), Instant.now())));
+        RunnerMapper runners = mapper(RunnerMapper.class, List.of(1L, 2L));
         RedisTemplate<Object, Object> redis = new RedisTemplate<>() {
             @Override public Boolean hasKey(Object key) { return key.equals("gputrain:runner:online:1"); }
         };
@@ -35,12 +32,29 @@ class TrainOverviewServiceTest
     void redisFailureDoesNotReportFalseReadyZeros()
     {
         JobMapper jobs = mapper(JobMapper.class, 0);
-        RunnerMapper runners = mapper(RunnerMapper.class, List.of(
-                new RunnerRecord(1L, 42L, "one", "user", "/tmp", "secret", "ACTIVE", Instant.now(), Instant.now(), Instant.now())));
+        RunnerMapper runners = mapper(RunnerMapper.class, List.of(1L));
         RedisTemplate<Object, Object> redis = new RedisTemplate<>() {
             @Override public Boolean hasKey(Object key) { throw new IllegalStateException("Redis unavailable"); }
         };
         assertThrows(IllegalStateException.class, () -> new TrainOverviewService(jobs, runners, redis).getOverview(42L, false));
+    }
+
+    @Test
+    void countsOnlineRunnersBeyondFirstPage()
+    {
+        JobMapper jobs = mapper(JobMapper.class, 0);
+        @SuppressWarnings("unchecked")
+        RunnerMapper runners = (RunnerMapper) Proxy.newProxyInstance(RunnerMapper.class.getClassLoader(),
+                new Class<?>[] { RunnerMapper.class }, (proxy, method, args) ->
+                {
+                    if ((long) args[2] == 0L) return LongStream.rangeClosed(1, 200).boxed().toList();
+                    assertEquals(200L, args[2]);
+                    return List.of(201L);
+                });
+        RedisTemplate<Object, Object> redis = new RedisTemplate<>() {
+            @Override public Boolean hasKey(Object key) { return key.equals("gputrain:runner:online:201"); }
+        };
+        assertEquals(1, new TrainOverviewService(jobs, runners, redis).getOverview(42L, false).onlineRunners());
     }
 
     @SuppressWarnings("unchecked")

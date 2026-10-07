@@ -1,5 +1,6 @@
 package com.ruoyi.train.core.overview;
 
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.data.redis.core.RedisTemplate;
 import com.ruoyi.common.utils.SecurityUtils;
@@ -30,9 +31,17 @@ public class TrainOverviewService
     {
         int active = jobs.countActive(userId, isAdmin);
         int online = 0;
-        for (var runner : runners.listActiveForOwner(userId, isAdmin))
+        long afterRunnerId = 0;
+        final int pageSize = 200;
+        while (true)
         {
-            if (Boolean.TRUE.equals(redis.hasKey("gputrain:runner:online:" + runner.runnerId()))) online++;
+            List<Long> runnerIds = runners.listActiveIdsForOwner(userId, isAdmin, afterRunnerId, pageSize);
+            for (Long runnerId : runnerIds)
+            {
+                if (Boolean.TRUE.equals(redis.hasKey("gputrain:runner:online:" + runnerId))) online++;
+            }
+            if (runnerIds.size() < pageSize) break;
+            afterRunnerId = runnerIds.get(runnerIds.size() - 1);
         }
         return new TrainOverview("READY", active, online);
     }

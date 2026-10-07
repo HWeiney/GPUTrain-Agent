@@ -21,6 +21,7 @@ export interface CreateTrainJobRequest {
   profileId: 'docowl2-srfund'
   maxSteps: number
   requestKey: string
+  allowedGpuUuids: string[]
 }
 
 export interface JobLogEvent {
@@ -56,10 +57,11 @@ export interface GpuResourceMetric {
   sampledAt: string
 }
 
-export function listTrainJobs(): Promise<AjaxResult<TrainJob[]>> {
+export function listTrainJobs(limit = 50, beforeJobId?: number): Promise<AjaxResult<TrainJob[]>> {
   return request({
     url: '/train/jobs',
-    method: 'get'
+    method: 'get',
+    params: { limit, ...(beforeJobId ? { beforeJobId } : {}) }
   })
 }
 
@@ -82,6 +84,10 @@ export function stopTrainJob(jobId: number): Promise<AjaxResult<TrainJob>> {
     url: `/train/jobs/${jobId}/stop`,
     method: 'post'
   })
+}
+
+export function cancelTrainJob(jobId: number): Promise<AjaxResult<TrainJob>> {
+  return request({ url: `/train/jobs/${jobId}/cancel`, method: 'post' })
 }
 
 export function getJobLogs(jobId: number, afterEventId = 0): Promise<AjaxResult<JobLogEvent[]>> {

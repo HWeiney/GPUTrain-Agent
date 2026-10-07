@@ -13,8 +13,9 @@ public interface RunnerMapper
 
     RunnerRecord findByName(@Param("runnerName") String runnerName);
 
-    List<RunnerRecord> listActiveForOwner(@Param("ownerUserId") Long ownerUserId,
-            @Param("isAdmin") boolean isAdmin);
+    List<Long> listActiveIdsForOwner(@Param("ownerUserId") Long ownerUserId,
+            @Param("isAdmin") boolean isAdmin, @Param("afterRunnerId") long afterRunnerId,
+            @Param("limit") int limit);
 
     int updateHeartbeat(@Param("runnerId") Long runnerId,
             @Param("lastSeenAt") Instant lastSeenAt);

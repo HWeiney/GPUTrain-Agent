@@ -33,9 +33,10 @@
         SELECT * FROM train_runner WHERE runner_name = #{runnerName}
     </select>
 
-    <select id="listActiveForOwner" resultMap="RunnerResult">
-        SELECT * FROM train_runner WHERE status = 'ACTIVE'
+    <select id="listActiveIdsForOwner" resultType="java.lang.Long">
+        SELECT runner_id FROM train_runner WHERE status = 'ACTIVE' AND runner_id &gt; #{afterRunnerId}
         <if test="!isAdmin">AND owner_user_id = #{ownerUserId}</if>
+        ORDER BY runner_id ASC LIMIT #{limit}
     </select>
 
     <update id="updateHeartbeat">

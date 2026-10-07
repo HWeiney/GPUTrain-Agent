@@ -135,6 +135,7 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 mvn -f backend/pom.xml clean test
 mvn -f backend/pom.xml -pl ruoyi-train-core test -Pmysql-it
 npm --prefix frontend test
+npm --prefix frontend run typecheck
 npm --prefix frontend run build:prod
 docker compose --env-file .env.example -f deploy/compose.yaml config -q
 git diff --check

@@ -54,8 +54,8 @@ public class JobAdminController
     {
         Set<String> allowedUuids = request.allowedGpuUuids() == null
                 ? Set.of() : Set.copyOf(request.allowedGpuUuids());
-        if (!allowedUuids.isEmpty() && (allowedUuids.size() != 3
-                || allowedUuids.stream().anyMatch(uuid -> !uuid.matches("GPU-[A-Fa-f0-9-]+"))))
+        if (allowedUuids.size() != 3
+                || allowedUuids.stream().anyMatch(uuid -> !uuid.matches("GPU-[A-Fa-f0-9-]+")))
             throw new IllegalArgumentException("GPU allowlist must contain exactly three GPU UUIDs");
         Map<String, String> environment = Map.of(
                 "MODEL_PATH", "/model/hanw/ms-swift-imp3-research/pretrained-imp/DocOwl2",
@@ -108,7 +108,5 @@ public class JobAdminController
 
     public record CreateJobRequest(String profileId, int maxSteps, String requestKey, Set<String> allowedGpuUuids)
     {
-        public CreateJobRequest(String profileId, int maxSteps, String requestKey)
-        { this(profileId, maxSteps, requestKey, Set.of()); }
     }
 }
