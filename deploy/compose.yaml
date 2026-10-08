@@ -17,6 +17,7 @@ services:
       - ../backend/sql/gputrain_phase3.sql:/docker-entrypoint-initdb.d/05-gputrain-phase3.sql:ro
       - ../backend/sql/gputrain_phase4.sql:/docker-entrypoint-initdb.d/06-gputrain-phase4.sql:ro
       - ../backend/sql/gputrain_phase6.sql:/docker-entrypoint-initdb.d/07-gputrain-phase6.sql:ro
+      - ../backend/sql/gputrain_phase8_ssh_servers.sql:/docker-entrypoint-initdb.d/08-gputrain-ssh-servers.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s

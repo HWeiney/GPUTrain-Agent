@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerGpuDeviceMapper">
+    <resultMap id="ServerGpuDeviceResult" type="com.ruoyi.train.core.server.domain.ServerGpuDeviceRecord">
+        <constructor>
+            <idArg column="device_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="identity_state" javaType="java.lang.String"/>
+            <arg column="schedulable" javaType="_boolean"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="columns">device_id, server_id, gpu_uuid, name, identity_state, schedulable, created_at, updated_at</sql>
+
+    <insert id="upsert" parameterType="com.ruoyi.train.core.server.domain.ServerGpuDeviceRecord">
+        INSERT INTO train_server_gpu_device
+            (server_id, gpu_uuid, name, identity_state, schedulable, created_at, updated_at)
+        VALUES (#{serverId}, #{gpuUuid}, #{name}, #{identityState}, #{schedulable}, #{createdAt}, #{updatedAt})
+        ON DUPLICATE KEY UPDATE name = VALUES(name), identity_state = VALUES(identity_state),
+            schedulable = VALUES(schedulable), updated_at = VALUES(updated_at)
+    </insert>
+
+    <select id="findByUuid" resultMap="ServerGpuDeviceResult">
+        SELECT <include refid="columns"/> FROM train_server_gpu_device
+        WHERE server_id = #{serverId} AND gpu_uuid = #{gpuUuid}
+    </select>
+
+    <select id="listByServer" resultMap="ServerGpuDeviceResult">
+        SELECT <include refid="columns"/> FROM train_server_gpu_device
+        WHERE server_id = #{serverId} ORDER BY gpu_uuid
+    </select>
+</mapper>

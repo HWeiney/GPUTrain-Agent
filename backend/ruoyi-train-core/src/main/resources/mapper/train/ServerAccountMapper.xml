@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerAccountMapper">
+    <resultMap id="ServerAccountResult" type="com.ruoyi.train.core.server.domain.ServerAccountRecord">
+        <constructor>
+            <idArg column="account_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="owner_user_id" javaType="java.lang.Long"/>
+            <arg column="linux_username" javaType="java.lang.String"/>
+            <arg column="auth_type" javaType="java.lang.String"/>
+            <arg column="credential_secret" javaType="java.lang.String"/>
+            <arg column="passphrase_secret" javaType="java.lang.String"/>
+            <arg column="has_credential" javaType="_boolean"/>
+            <arg column="allowed_root" javaType="java.lang.String"/>
+            <arg column="profile_json" javaType="java.lang.String"/>
+            <arg column="enabled" javaType="_boolean"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="error_code" javaType="java.lang.String"/>
+            <arg column="last_probe_at" javaType="java.time.Instant"/>
+            <arg column="last_success_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <!-- Null aliases fill the record constructor without reading secret columns. -->
+    <sql id="publicColumns">
+        account_id, server_id, owner_user_id, linux_username, auth_type,
+        NULL AS credential_secret, NULL AS passphrase_secret, has_credential,
+        allowed_root, profile_json, enabled, status, error_code,
+        last_probe_at, last_success_at, created_at, updated_at
+    </sql>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.domain.ServerAccountRecord">
+        INSERT INTO train_server_account
+            (server_id, owner_user_id, linux_username, auth_type, credential_ciphertext,
+             passphrase_ciphertext, allowed_root, profile_json, enabled, status, error_code,
+             last_probe_at, last_success_at, created_at, updated_at)
+        VALUES (#{serverId}, #{ownerUserId}, #{linuxUsername}, #{authType}, #{credentialCiphertext},
+            #{passphraseCiphertext}, #{allowedRoot}, CAST(#{profileJson} AS JSON), #{enabled},
+            #{status}, #{errorCode}, #{lastProbeAt}, #{lastSuccessAt}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findById" resultMap="ServerAccountResult">
+        SELECT <include refid="publicColumns"/> FROM train_server_account WHERE account_id = #{accountId}
+    </select>
+
+    <select id="listForOwner" resultMap="ServerAccountResult">
+        SELECT <include refid="publicColumns"/> FROM train_server_account
+        WHERE server_id = #{serverId} AND owner_user_id = #{ownerUserId}
+        ORDER BY account_id
+    </select>
+
+    <select id="findCredentialsByAuthorizedAccountId" resultMap="ServerAccountResult">
+        SELECT account_id, server_id, owner_user_id, linux_username, auth_type,
+            credential_ciphertext AS credential_secret, passphrase_ciphertext AS passphrase_secret,
+            has_credential, allowed_root, profile_json, enabled, status, error_code,
+            last_probe_at, last_success_at, created_at, updated_at
+        FROM train_server_account WHERE account_id = #{authorizedAccountId}
+    </select>
+
+    <update id="updateCredentials">
+        UPDATE train_server_account
+        SET credential_ciphertext = #{credentialCiphertext}, passphrase_ciphertext = #{passphraseCiphertext},
+            updated_at = #{updatedAt}
+        WHERE account_id = #{authorizedAccountId}
+    </update>
+
+    <update id="updateProbeOutcome">
+        UPDATE train_server_account
+        SET last_probe_at = #{sampledAt}, status = #{status}, error_code = #{errorCode},
+            last_success_at = CASE WHEN #{successful} THEN #{sampledAt} ELSE last_success_at END,
+            updated_at = #{sampledAt}
+        WHERE account_id = #{accountId}
+    </update>
+</mapper>

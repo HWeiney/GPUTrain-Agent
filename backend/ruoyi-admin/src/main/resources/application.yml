@@ -45,6 +45,8 @@ server:
 logging:
   level:
     com.ruoyi: debug
+    # Never log SSH credential SQL parameters or result rows.
+    com.ruoyi.train.core.server.mapper.ServerAccountMapper: warn
     org.springframework: warn
 
 # 用户配置

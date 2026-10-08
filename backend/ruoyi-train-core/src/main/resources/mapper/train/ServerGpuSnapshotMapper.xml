@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerGpuSnapshotMapper">
+    <resultMap id="ServerGpuSnapshotResult" type="com.ruoyi.train.core.server.domain.ServerGpuSnapshotRecord">
+        <constructor>
+            <idArg column="snapshot_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="account_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="visible_index" javaType="_int"/>
+            <arg column="total_memory_mib" javaType="_long"/>
+            <arg column="used_memory_mib" javaType="_long"/>
+            <arg column="utilization_percent" javaType="_int"/>
+            <arg column="mig_mode" javaType="java.lang.String"/>
+            <arg column="driver_version" javaType="java.lang.String"/>
+            <arg column="compute_processes_json" javaType="java.lang.String"/>
+            <arg column="sampled_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.domain.ServerGpuSnapshotRecord">
+        INSERT INTO train_server_gpu_snapshot
+            (server_id, account_id, gpu_uuid, visible_index, total_memory_mib, used_memory_mib,
+             utilization_percent, mig_mode, driver_version, compute_processes, sampled_at, created_at)
+        VALUES (#{serverId}, #{accountId}, #{gpuUuid}, #{visibleIndex}, #{totalMemoryMiB}, #{usedMemoryMiB},
+            #{utilizationPercent}, #{migMode}, #{driverVersion}, CAST(#{computeProcessesJson} AS JSON),
+            #{sampledAt}, #{createdAt})
+    </insert>
+
+    <select id="findLatest" resultMap="ServerGpuSnapshotResult">
+        SELECT snapshot_id, server_id, account_id, gpu_uuid, visible_index, total_memory_mib,
+            used_memory_mib, utilization_percent, mig_mode, driver_version,
+            CAST(compute_processes AS CHAR) AS compute_processes_json, sampled_at, created_at
+        FROM train_server_gpu_snapshot
+        WHERE server_id = #{serverId} AND account_id = #{accountId} AND gpu_uuid = #{gpuUuid}
+        ORDER BY sampled_at DESC, snapshot_id DESC LIMIT 1
+    </select>
+</mapper>

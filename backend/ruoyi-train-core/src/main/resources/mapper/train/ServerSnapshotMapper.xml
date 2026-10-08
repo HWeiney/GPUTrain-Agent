@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerSnapshotMapper">
+    <resultMap id="ServerSnapshotResult" type="com.ruoyi.train.core.server.domain.ServerSnapshotRecord">
+        <constructor>
+            <idArg column="snapshot_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="account_id" javaType="java.lang.Long"/>
+            <arg column="sampled_at" javaType="java.time.Instant"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="error_code" javaType="java.lang.String"/>
+            <arg column="capabilities_json" javaType="java.lang.String"/>
+            <arg column="facts_json" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.domain.ServerSnapshotRecord">
+        INSERT INTO train_server_snapshot
+            (server_id, account_id, sampled_at, status, error_code, capabilities_json, facts_json, created_at)
+        VALUES (#{serverId}, #{accountId}, #{sampledAt}, #{status}, #{errorCode},
+            CAST(#{capabilitiesJson} AS JSON), CAST(#{factsJson} AS JSON), #{createdAt})
+    </insert>
+
+    <select id="findLatest" resultMap="ServerSnapshotResult">
+        SELECT snapshot_id, server_id, account_id, sampled_at, status, error_code,
+            capabilities_json, facts_json, created_at
+        FROM train_server_snapshot WHERE server_id = #{serverId} AND account_id = #{accountId}
+        ORDER BY sampled_at DESC, snapshot_id DESC LIMIT 1
+    </select>
+</mapper>

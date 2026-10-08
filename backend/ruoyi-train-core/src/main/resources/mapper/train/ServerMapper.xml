@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerMapper">
+    <resultMap id="ServerResult" type="com.ruoyi.train.core.server.domain.ServerRecord">
+        <constructor>
+            <idArg column="server_id" javaType="java.lang.Long"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="host" javaType="java.lang.String"/>
+            <arg column="port" javaType="_int"/>
+            <arg column="host_key_sha256" javaType="java.lang.String"/>
+            <arg column="enabled" javaType="_boolean"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="columns">server_id, name, host, port, host_key_sha256, enabled, created_at, updated_at</sql>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.domain.ServerRecord">
+        INSERT INTO train_server (name, host, port, host_key_sha256, enabled, created_at, updated_at)
+        VALUES (#{name}, #{host}, #{port}, #{hostKeySha256}, #{enabled}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="findById" resultMap="ServerResult">
+        SELECT <include refid="columns"/> FROM train_server WHERE server_id = #{serverId}
+    </select>
+
+    <select id="listForOwner" resultMap="ServerResult">
+        SELECT <include refid="columns"/> FROM train_server s
+        <if test="!isAdmin">
+            WHERE EXISTS (SELECT a.account_id FROM train_server_account a
+                WHERE a.server_id = s.server_id AND a.owner_user_id = #{ownerUserId})
+        </if>
+        ORDER BY server_id
+    </select>
+
+    <update id="setEnabled">
+        UPDATE train_server SET enabled = #{enabled}, updated_at = #{updatedAt}
+        WHERE server_id = #{serverId}
+    </update>
+</mapper>
