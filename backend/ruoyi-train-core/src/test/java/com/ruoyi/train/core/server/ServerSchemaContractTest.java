@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ruoyi.framework.config.CredentialSafeDruidConfiguration;
 import com.ruoyi.train.core.server.domain.ServerAccountRecord;
 import com.ruoyi.train.core.server.domain.ServerGpuDeviceRecord;
 import com.ruoyi.train.core.server.domain.ServerGpuSnapshotRecord;
@@ -26,7 +27,18 @@ import com.ruoyi.train.core.server.mapper.ServerGpuSnapshotMapper;
 import com.ruoyi.train.core.server.mapper.ServerMapper;
 import com.ruoyi.train.core.server.mapper.ServerSnapshotMapper;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
-import org.apache.ibatis.datasource.unpooled.UnpooledDataSource;
+import com.alibaba.druid.filter.stat.StatFilter;
+import com.alibaba.druid.pool.DruidDataSource;
+import com.alibaba.druid.spring.boot3.autoconfigure.stat.DruidFilterConfiguration;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBindingPostProcessor;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.PropertiesPropertySource;
+import org.springframework.core.io.FileSystemResource;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.mapping.MappedStatement;
 import org.apache.ibatis.mapping.ResultMapping;
@@ -143,6 +155,21 @@ class ServerSchemaContractTest
     }
 
     @Test
+    void datasourceInstallsOnlyCredentialSafeStatFilter() throws Exception
+    {
+        try (AnnotationConfigApplicationContext context = druidFilterContext())
+        {
+            var filters = context.getBeansOfType(StatFilter.class);
+            assertEquals(1, filters.size(), "a second stock StatFilter would still retain credentials");
+            StatFilter filter = filters.values().iterator().next();
+            assertNotEquals(StatFilter.class, filter.getClass(), "replace stock parameter retention before logging/statistics");
+            assertTrue(filter.isLogSlowSql(), "keep configured slow SQL diagnostics enabled");
+            assertTrue(filter.isMergeSql());
+            assertEquals(1000, filter.getSlowSqlMillis());
+        }
+    }
+
+    @Test
     void accountSerializationAndLoggingExcludeBothCiphertexts() throws Exception
     {
         ServerAccountRecord account = new ServerAccountRecord(1L, 2L, 3L, "linux", "PRIVATE_KEY",
@@ -211,68 +238,127 @@ class ServerSchemaContractTest
     private void assertMapperRoundTrips(String database) throws Exception
     {
         Configuration configuration = configuration();
-        configuration.setEnvironment(new Environment("schema-it", new JdbcTransactionFactory(),
-            new UnpooledDataSource("com.mysql.cj.jdbc.Driver", System.getProperty("mysql.it.url"),
-                System.getProperty("mysql.it.user"), System.getProperty("mysql.it.password"))));
-        try (SqlSession session = new SqlSessionFactoryBuilder().build(configuration).openSession())
+        Logger statLogger = (Logger) LoggerFactory.getLogger(StatFilter.class);
+        ListAppender<ILoggingEvent> capturedLogs = new ListAppender<>();
+        capturedLogs.start();
+        statLogger.addAppender(capturedLogs);
+        try (AnnotationConfigApplicationContext context = druidFilterContext();
+                DruidDataSource dataSource = new DruidDataSource())
         {
-            session.getConnection().setCatalog(database);
-            ServerMapper servers = session.getMapper(ServerMapper.class);
-            assertEquals("host", servers.findById(1L).host());
-            assertEquals(2, servers.listForOwner(1L, false).size());
-            assertEquals(0, servers.listForOwner(99L, false).size());
-            assertEquals(2, servers.listForOwner(99L, true).size());
-            Instant sampledAt = Instant.parse("2026-10-07T00:00:00Z");
-            assertEquals(1, servers.insert(new ServerRecord(null, "three", "host3", 22,
-                "SHA256:three", true, sampledAt, sampledAt)));
-            Long thirdId = servers.listForOwner(99L, true).stream()
-                .filter(server -> server.host().equals("host3")).findFirst().orElseThrow().serverId();
-            assertEquals(1, servers.setEnabled(thirdId, false, sampledAt));
-            assertFalse(servers.findById(thirdId).enabled());
+            dataSource.setUrl(System.getProperty("mysql.it.url"));
+            dataSource.setUsername(System.getProperty("mysql.it.user"));
+            dataSource.setPassword(System.getProperty("mysql.it.password"));
+            dataSource.setInitialSize(0);
+            dataSource.setMinIdle(0);
+            dataSource.setMaxActive(2);
+            StatFilter statFilter = context.getBean(StatFilter.class);
+            statFilter.setSlowSqlMillis(0); // every statement reaches retention and ERROR logging
+            dataSource.getProxyFilters().add(statFilter);
+            configuration.setEnvironment(new Environment("schema-it", new JdbcTransactionFactory(), dataSource));
+            try (SqlSession session = new SqlSessionFactoryBuilder().build(configuration).openSession())
+            {
+                session.getConnection().setCatalog(database);
+                ServerMapper servers = session.getMapper(ServerMapper.class);
+                assertEquals("host", servers.findById(1L).host());
+                assertEquals(2, servers.listForOwner(1L, false).size());
+                assertEquals(0, servers.listForOwner(99L, false).size());
+                assertEquals(2, servers.listForOwner(99L, true).size());
+                Instant sampledAt = Instant.parse("2026-10-07T00:00:00Z");
+                assertEquals(1, servers.insert(new ServerRecord(null, "three", "host3", 22,
+                    "SHA256:three", true, sampledAt, sampledAt)));
+                Long thirdId = servers.listForOwner(99L, true).stream()
+                    .filter(server -> server.host().equals("host3")).findFirst().orElseThrow().serverId();
+                assertEquals(1, servers.setEnabled(thirdId, false, sampledAt));
+                assertFalse(servers.findById(thirdId).enabled());
 
-            ServerAccountMapper accounts = session.getMapper(ServerAccountMapper.class);
-            ServerAccountRecord publicAccount = accounts.findById(1L);
-            assertTrue(publicAccount.hasCredential());
-            assertNull(publicAccount.credentialCiphertext());
-            assertNull(publicAccount.passphraseCiphertext());
-            assertEquals(1, accounts.listForOwner(1L, 1L).size());
-            assertEquals(0, accounts.listForOwner(1L, 99L).size());
-            assertNull(accounts.listForOwner(1L, 1L).get(0).credentialCiphertext());
-            assertEquals("cipher", accounts.findCredentialsByAuthorizedAccountId(1L).credentialCiphertext());
-            assertEquals(1, accounts.insert(new ServerAccountRecord(null, 1L, 2L, "other", "PRIVATE_KEY",
-                "private-key-cipher", "passphrase-cipher", true, "/tmp", "{}", true, "UNKNOWN",
-                null, null, null, sampledAt, sampledAt)));
-            Long otherAccountId = accounts.listForOwner(1L, 2L).get(0).accountId();
-            assertEquals(1, accounts.updateCredentials(otherAccountId, "rotated-cipher", null, sampledAt));
-            assertEquals("rotated-cipher", accounts.findCredentialsByAuthorizedAccountId(otherAccountId).credentialCiphertext());
-            assertNull(accounts.findCredentialsByAuthorizedAccountId(otherAccountId).passphraseCiphertext());
-            assertEquals(1, accounts.updateProbeOutcome(1L, "ONLINE", null, sampledAt, true));
-            assertEquals(1, accounts.updateProbeOutcome(1L, "OFFLINE", "CONNECT_TIMEOUT", sampledAt.plusSeconds(10), false));
-            assertEquals(sampledAt, accounts.findById(1L).lastSuccessAt());
-            assertEquals(sampledAt.plusSeconds(10), accounts.findById(1L).lastProbeAt());
-            assertEquals("OFFLINE", accounts.findById(1L).status());
+                ServerAccountMapper accounts = session.getMapper(ServerAccountMapper.class);
+                ServerAccountRecord publicAccount = accounts.findById(1L);
+                assertTrue(publicAccount.hasCredential());
+                assertNull(publicAccount.credentialCiphertext());
+                assertNull(publicAccount.passphraseCiphertext());
+                assertEquals(1, accounts.listForOwner(1L, 1L).size());
+                assertEquals(0, accounts.listForOwner(1L, 99L).size());
+                assertNull(accounts.listForOwner(1L, 1L).get(0).credentialCiphertext());
+                assertEquals("cipher", accounts.findCredentialsByAuthorizedAccountId(1L).credentialCiphertext());
+                assertEquals(1, accounts.insert(new ServerAccountRecord(null, 1L, 2L, "other", "PRIVATE_KEY",
+                    "private-key-cipher", "passphrase-cipher", true, "/tmp", "{}", true, "UNKNOWN",
+                    null, null, null, sampledAt, sampledAt)));
+                Long otherAccountId = accounts.listForOwner(1L, 2L).get(0).accountId();
+                assertEquals(1, accounts.updateCredentials(otherAccountId, "rotated-cipher", null, sampledAt));
+                assertEquals("rotated-cipher", accounts.findCredentialsByAuthorizedAccountId(otherAccountId).credentialCiphertext());
+                assertNull(accounts.findCredentialsByAuthorizedAccountId(otherAccountId).passphraseCiphertext());
+                assertEquals(1, accounts.updateProbeOutcome(1L, "ONLINE", null, sampledAt, true));
+                assertEquals(1, accounts.updateProbeOutcome(1L, "OFFLINE", "CONNECT_TIMEOUT", sampledAt.plusSeconds(10), false));
+                assertEquals(sampledAt, accounts.findById(1L).lastSuccessAt());
+                assertEquals(sampledAt.plusSeconds(10), accounts.findById(1L).lastProbeAt());
+                assertEquals("OFFLINE", accounts.findById(1L).status());
 
-            ServerSnapshotMapper snapshots = session.getMapper(ServerSnapshotMapper.class);
-            assertEquals(1, snapshots.insert(new ServerSnapshotRecord(null, 1L, 1L, sampledAt,
-                "ONLINE", null, "{\"ssh\":true}", "{\"load1\":0.5}", sampledAt)));
-            assertTrue(snapshots.findLatest(1L, 1L).factsJson().contains("load1"));
-            assertNull(snapshots.findLatest(2L, 1L));
+                ServerSnapshotMapper snapshots = session.getMapper(ServerSnapshotMapper.class);
+                assertEquals(1, snapshots.insert(new ServerSnapshotRecord(null, 1L, 1L, sampledAt,
+                    "ONLINE", null, "{\"ssh\":true}", "{\"load1\":0.5}", sampledAt)));
+                assertTrue(snapshots.findLatest(1L, 1L).factsJson().contains("load1"));
+                assertNull(snapshots.findLatest(2L, 1L));
 
-            ServerGpuDeviceMapper devices = session.getMapper(ServerGpuDeviceMapper.class);
-            assertEquals("A100", devices.findByUuid(1L, "GPU-same").name());
-            assertTrue(devices.upsert(new ServerGpuDeviceRecord(null, 1L, "GPU-same", "renamed",
-                "OBSERVED", false, sampledAt, sampledAt)) > 0);
-            assertEquals("renamed", devices.listByServer(1L).get(0).name());
-            assertEquals("A100", devices.listByServer(2L).get(0).name());
+                ServerGpuDeviceMapper devices = session.getMapper(ServerGpuDeviceMapper.class);
+                assertEquals("A100", devices.findByUuid(1L, "GPU-same").name());
+                assertTrue(devices.upsert(new ServerGpuDeviceRecord(null, 1L, "GPU-same", "renamed",
+                    "OBSERVED", false, sampledAt, sampledAt)) > 0);
+                assertEquals("renamed", devices.listByServer(1L).get(0).name());
+                assertEquals("A100", devices.listByServer(2L).get(0).name());
 
-            ServerGpuSnapshotMapper gpuSnapshots = session.getMapper(ServerGpuSnapshotMapper.class);
-            assertEquals(1, gpuSnapshots.insert(new ServerGpuSnapshotRecord(null, 1L, 1L, "GPU-same",
-                0, 80000, 1000, 10, "DISABLED", "550", "[]", sampledAt, sampledAt)));
-            assertEquals(80000, gpuSnapshots.findLatest(1L, 1L, "GPU-same").totalMemoryMiB());
-            assertEquals("[]", gpuSnapshots.findLatest(1L, 1L, "GPU-same").computeProcessesJson());
-            assertNull(gpuSnapshots.findLatest(2L, 2L, "GPU-same"));
-            session.commit();
+                ServerGpuSnapshotMapper gpuSnapshots = session.getMapper(ServerGpuSnapshotMapper.class);
+                assertEquals(1, gpuSnapshots.insert(new ServerGpuSnapshotRecord(null, 1L, 1L, "GPU-same",
+                    0, 80000, 1000, 10, "DISABLED", "550", "[]", sampledAt, sampledAt)));
+                assertEquals(80000, gpuSnapshots.findLatest(1L, 1L, "GPU-same").totalMemoryMiB());
+                assertEquals("[]", gpuSnapshots.findLatest(1L, 1L, "GPU-same").computeProcessesJson());
+                assertNull(gpuSnapshots.findLatest(2L, 2L, "GPU-same"));
+                try (var plainSql = session.getConnection().prepareStatement("SELECT ? AS diagnostic"))
+                {
+                    plainSql.setString(1, "visible-stat-value");
+                    try (var rows = plainSql.executeQuery())
+                    {
+                        assertTrue(rows.next());
+                    }
+                }
+                session.commit();
+            }
+            var statistics = dataSource.getDataSourceStat().getSqlStatMap().values();
+            assertTrue(statistics.stream().anyMatch(stat -> stat.getSql().contains("train_server_account")));
+            String retainedParameters = statistics.stream().map(stat -> String.valueOf(stat.getLastSlowParameters()))
+                .collect(java.util.stream.Collectors.joining("\n"));
+            for (String secret : List.of("private-key-cipher", "passphrase-cipher", "rotated-cipher"))
+                assertFalse(retainedParameters.contains(secret), "Druid statistics retained secret " + secret);
+            for (var stat : statistics)
+            {
+                if (stat.getSql().toLowerCase(java.util.Locale.ROOT).contains("train_server_account"))
+                    assertEquals("[]", stat.getLastSlowParameters(), stat.getSql());
+            }
+            assertTrue(statistics.stream().anyMatch(stat -> stat.getLastSlowParameters() != null
+                && stat.getLastSlowParameters().contains("visible-stat-value")), "ordinary SQL keeps diagnostics");
+            String logs = capturedLogs.list.stream().map(ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            assertTrue(logs.contains("slow sql"), "exercise actual ERROR-level slow SQL logs");
+            for (String secret : List.of("private-key-cipher", "passphrase-cipher", "rotated-cipher"))
+                assertFalse(logs.contains(secret), "Druid slow SQL log exposed secret " + secret);
         }
+        finally
+        {
+            statLogger.detachAppender(capturedLogs);
+            capturedLogs.stop();
+        }
+    }
+
+    private AnnotationConfigApplicationContext druidFilterContext() throws Exception
+    {
+        YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
+        yaml.setResources(new FileSystemResource("../ruoyi-admin/src/main/resources/application-druid.yml"));
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+        context.getEnvironment().getPropertySources().addLast(new PropertiesPropertySource("druid", yaml.getObject()));
+        ConfigurationPropertiesBindingPostProcessor.register(context);
+        context.register(CredentialSafeDruidConfiguration.class);
+        context.register(DruidFilterConfiguration.class);
+        context.refresh();
+        return context;
     }
 
     private Configuration configuration() throws Exception
