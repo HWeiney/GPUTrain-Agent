@@ -12,6 +12,7 @@ export interface ServerCapabilities {
   gpu: boolean
   systemdUser: boolean
   persistentUserManager: boolean
+  appendLogs: boolean
 }
 
 export interface ServerView {

@@ -37,9 +37,19 @@ public class ServerProbe
                 || (manager.exitCode() == 1 && manager.stdout().strip().equals("degraded"));
             CommandResult linger = run(session, List.of("loginctl", "show-user", "--property=Linger"));
             boolean persistent = systemd && linger.exitCode() == 0 && linger.stdout().strip().equals("Linger=yes");
+            boolean appendLogs = false;
+            if (persistent)
+            {
+                CommandResult appendProbe = run(session, List.of("systemd-run", "--user", "--wait", "--collect",
+                    "--unit=gputrain-capability-probe.service",
+                    "--property=StandardOutput=append:/dev/null",
+                    "--property=StandardError=append:/dev/null", "/usr/bin/true"));
+                appendLogs = appendProbe.exitCode() == 0;
+            }
             return new ServerProbeResult(server.serverId(), account.accountId(), now, load,
                 memory[0], memory[1], disk[0], disk[1], query.gpus(), query.driverVersion(),
-                Map.of("ssh", true, "gpu", hasGpu, "systemdUser", systemd, "persistentUserManager", persistent),
+                Map.of("ssh", true, "gpu", hasGpu, "systemdUser", systemd,
+                    "persistentUserManager", persistent, "appendLogs", appendLogs),
                 hasGpu && systemd && persistent ? "ONLINE" : "DEGRADED", hasGpu ? null : "GPU_UNAVAILABLE");
         });
     }

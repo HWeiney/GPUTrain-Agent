@@ -223,7 +223,7 @@ public class ServerInventoryService {
             || account.lastSuccessAt().isBefore(clock.instant().minusSeconds(30))
             || account.lastSuccessAt().isAfter(clock.instant().plusSeconds(60)))) status="OFFLINE";
         Map<String, Boolean> capabilities=new LinkedHashMap<>();
-        for (String key:List.of("ssh", "gpu", "systemdUser", "persistentUserManager")) capabilities.put(key, false);
+        for (String key:List.of("ssh", "gpu", "systemdUser", "persistentUserManager", "appendLogs")) capabilities.put(key, false);
         if (account!=null && Set.of("ONLINE", "DEGRADED").contains(status)) {
             ServerSnapshotRecord snapshot=snapshots.findLatest(server.serverId(), account.accountId());
             if (snapshot!=null && Objects.equals(snapshot.sampledAt(), account.lastSuccessAt())) {

@@ -28,6 +28,12 @@ class SshJobSubmissionValidatorTest
                 .validate(submission(), detail(false), devices(true), NOW, UUID.randomUUID()));
     }
 
+    @Test void rejectsServersWithoutAppendLogSupport()
+    {
+        assertThrows(IllegalArgumentException.class, () -> new SshJobSubmissionValidator()
+                .validate(submission(), detail(true, false), devices(true), NOW, UUID.randomUUID()));
+    }
+
     @Test void rejectsStaleOrUnobservableSelectedGpu()
     {
         assertThrows(IllegalArgumentException.class, () -> new SshJobSubmissionValidator()
@@ -41,10 +47,12 @@ class SshJobSubmissionValidatorTest
                 3600, 70000, true, 4L, 8L);
     }
 
-    private static ServerDetail detail(boolean persistent)
+    private static ServerDetail detail(boolean persistent) { return detail(persistent, true); }
+
+    private static ServerDetail detail(boolean persistent, boolean appendLogs)
     {
         Map<String, Boolean> capabilities = Map.of("ssh", true, "gpu", true,
-                "systemdUser", true, "persistentUserManager", persistent);
+                "systemdUser", true, "persistentUserManager", persistent, "appendLogs", appendLogs);
         var server = new ServerView(4L, "node", "host", 22, "SHA256:test", true,
                 NOW, NOW, "ONLINE", capabilities);
         var account = new ServerAccountView(8L, 4L, 7L, "alice", "PRIVATE_KEY", true, "/data/hanw");

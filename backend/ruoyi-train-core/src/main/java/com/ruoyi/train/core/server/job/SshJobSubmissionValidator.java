@@ -33,7 +33,8 @@ public final class SshJobSubmissionValidator
                 || account.allowedRoot() == null || !server.capabilities().getOrDefault("ssh", false)
                 || !server.capabilities().getOrDefault("gpu", false)
                 || !server.capabilities().getOrDefault("systemdUser", false)
-                || !server.capabilities().getOrDefault("persistentUserManager", false))
+                || !server.capabilities().getOrDefault("persistentUserManager", false)
+                || !server.capabilities().getOrDefault("appendLogs", false))
             throw invalid("SERVER_NOT_TRAINABLE");
 
         Set<String> selected = Set.copyOf(submission.allowedUuids());

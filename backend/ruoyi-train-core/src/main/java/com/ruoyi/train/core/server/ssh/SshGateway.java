@@ -26,6 +26,9 @@ public interface SshGateway
         default void uploadPrivateFile(String allowedRoot, String privateDirectory,
                 String fileName, byte[] content, int maxBytes)
         { throw new SshException(ErrorCode.COMMAND_NOT_ALLOWED); }
+        default byte[] readPrivateFile(String allowedRoot, String privateDirectory,
+                String fileName, long offset, int maxBytes)
+        { throw new SshException(ErrorCode.COMMAND_NOT_ALLOWED); }
         @Override void close();
     }
 

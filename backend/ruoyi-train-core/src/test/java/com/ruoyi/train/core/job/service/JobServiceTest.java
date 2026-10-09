@@ -96,7 +96,7 @@ class JobServiceTest
             @Override public ServerDetail detail(Long serverId, Long accountId, Long userId) {
                 return new ServerDetail(new ServerView(4L, "node", "host", 22, "SHA256:test", true,
                         NOW, NOW, "ONLINE", Map.of("ssh", true, "gpu", true, "systemdUser", true,
-                                "persistentUserManager", true)),
+                                "persistentUserManager", true, "appendLogs", true)),
                         List.of(new ServerAccountView(8L, 4L, userId, "alice", "PRIVATE_KEY", true, "/data/hanw")), null);
             }
         };
@@ -360,6 +360,7 @@ class JobServiceTest
         @Override public List<JobRecord> listDueSshJobs(Instant cutoff, int limit) { return List.of(); }
         @Override public List<JobRecord> listSshToStart(int limit) { return List.of(); }
         @Override public List<JobRecord> listSshForReconciliation(int limit) { return List.of(); }
+        @Override public List<JobRecord> listSshJobsForLogs(Instant terminalCutoff, int limit) { return List.of(); }
 
         @Override
         public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin, int limit, Long beforeJobId)

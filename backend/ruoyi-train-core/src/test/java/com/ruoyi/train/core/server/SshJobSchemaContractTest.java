@@ -70,6 +70,7 @@ class SshJobSchemaContractTest
         assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listDueSshJobs"));
         assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listSshToStart"));
         assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listSshForReconciliation"));
+        assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listSshJobsForLogs"));
         assertTrue(configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.findById")
             .getBoundSql(java.util.Map.of("jobId", 1L)).getSql().contains("SELECT"));
         String insertSql = configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.insert")

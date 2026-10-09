@@ -73,6 +73,16 @@
         ORDER BY updated_at, job_id LIMIT #{limit}
     </select>
 
+    <select id="listSshJobsForLogs" resultMap="JobResult">
+        SELECT * FROM train_job
+        WHERE execution_mode='SSH' AND (
+            status IN ('ALLOCATED','STARTING','RUNNING','STOPPING','RECONCILING','UNKNOWN','QUARANTINED')
+            OR (status IN ('SUCCEEDED','FAILED','STOPPED','CANCELED') AND updated_at &gt;= #{terminalCutoff})
+        )
+        ORDER BY CASE WHEN status IN ('SUCCEEDED','FAILED','STOPPED','CANCELED') THEN 1 ELSE 0 END,
+                 updated_at, job_id LIMIT #{limit}
+    </select>
+
     <select id="listByOwner" resultMap="JobResult">
         SELECT * FROM train_job
         <where>

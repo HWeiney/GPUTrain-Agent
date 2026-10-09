@@ -30,6 +30,9 @@ public class ServerProbeTest
             replies.put(List.of("nvidia-smi", "--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"), new CommandResult(0, "GPU-same, 123, [Not Found], 1000\n", ""));
             replies.put(List.of("systemctl", "--user", "is-system-running"), new CommandResult(0, "running\n", ""));
             replies.put(List.of("loginctl", "show-user", "--property=Linger"), new CommandResult(0, "Linger=yes\n", ""));
+            replies.put(List.of("systemd-run", "--user", "--wait", "--collect", "--unit=gputrain-capability-probe.service",
+                    "--property=StandardOutput=append:/dev/null", "--property=StandardError=append:/dev/null", "/usr/bin/true"),
+                    new CommandResult(0, "", ""));
         }
         public HostKeyPreview preview(String host, int port, Duration timeout) { throw new AssertionError("must use pinned session"); }
         public <T> T withVerifiedSession(ServerRecord server, ServerAccountRecord account, Function<SshSession,T> operation)
@@ -59,9 +62,9 @@ public class ServerProbeTest
         assertEquals(4000, result.memoryAvailableKiB());
         assertEquals(20000, result.diskTotalKiB());
         assertEquals(15000, result.diskAvailableKiB());
-        assertEquals(Map.of("ssh", true, "gpu", true, "systemdUser", true, "persistentUserManager", true), result.capabilities());
+        assertEquals(Map.of("ssh", true, "gpu", true, "systemdUser", true, "persistentUserManager", true, "appendLogs", true), result.capabilities());
         assertEquals("ONLINE", result.status());
-        assertEquals(7, gateway.commands.size());
+        assertEquals(8, gateway.commands.size());
     }
 
     @Test void missingNvidiaOnlyDisablesGpuCapability()
@@ -69,9 +72,19 @@ public class ServerProbeTest
         FixtureGateway gateway = new FixtureGateway();
         gateway.replies.replaceAll((command, reply) -> command.get(0).equals("nvidia-smi") ? new CommandResult(127, "", "not found") : reply);
         var result = new ServerProbe(gateway).collect(server(1), account(1, 11), NOW);
-        assertEquals(Map.of("ssh", true, "gpu", false, "systemdUser", true, "persistentUserManager", true), result.capabilities());
+        assertEquals(Map.of("ssh", true, "gpu", false, "systemdUser", true, "persistentUserManager", true, "appendLogs", true), result.capabilities());
         assertTrue(result.gpus().isEmpty());
         assertEquals("DEGRADED", result.status());
+    }
+
+    @Test void appendLogCapabilityFailsWhenSystemdCannotRunAppendProbe()
+    {
+        FixtureGateway gateway = new FixtureGateway();
+        List<String> command = List.of("systemd-run", "--user", "--wait", "--collect", "--unit=gputrain-capability-probe.service",
+                "--property=StandardOutput=append:/dev/null", "--property=StandardError=append:/dev/null", "/usr/bin/true");
+        gateway.replies.put(command, new CommandResult(1, "", "unsupported"));
+        var result = new ServerProbe(gateway).collect(server(1), account(1, 11), NOW);
+        assertFalse(result.capabilities().get("appendLogs"));
     }
 
     @Test void failedComputeQueryCannotBeTreatedAsIdle()

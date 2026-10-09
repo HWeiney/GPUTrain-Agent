@@ -51,7 +51,9 @@ public final class MinaSshGateway implements SshGateway
         List.of("nvidia-smi", "--query-gpu=gpu_uuid,name,index,memory.total,memory.used,utilization.gpu,mig.mode.current,driver_version", "--format=csv,noheader,nounits"),
         List.of("nvidia-smi", "--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"),
         List.of("systemctl", "--user", "is-system-running"),
-        List.of("loginctl", "show-user", "--property=Linger"));
+        List.of("loginctl", "show-user", "--property=Linger"),
+        List.of("systemd-run", "--user", "--wait", "--collect", "--unit=gputrain-capability-probe.service",
+            "--property=StandardOutput=append:/dev/null", "--property=StandardError=append:/dev/null", "/usr/bin/true"));
     private static final String SYSTEMD_PROPERTIES = "LoadState,ActiveState,SubState,Result,ExecMainPID,ExecMainStatus,ControlGroup";
 
     // DNS lookup may block in native code; cap both caller wait and resolver workers.
@@ -325,6 +327,50 @@ public final class MinaSshGateway implements SshGateway
                     output.write(content);
                 }
                 sftp.setStat(remoteFile, new SftpClient.Attributes().perms(0600));
+            }
+            catch (SshException e) { throw e; }
+            catch (IOException e) { throw new SshException(COMMAND_FAILED); }
+        }
+
+        @Override public synchronized byte[] readPrivateFile(String allowedRoot, String privateDirectory,
+                String fileName, long offset, int maxBytes)
+        {
+            if (closed || !session.isAuthenticated() || offset < 0 || maxBytes < 1 || maxBytes > 65536
+                    || fileName == null || !Set.of("stdout.log", "stderr.log").contains(fileName)) throw new SshException(INVALID_LIMIT);
+            Path root = absoluteNormalized(allowedRoot);
+            Path directory = absoluteNormalized(privateDirectory);
+            if (!validJobDirectory(directory.toString(), directory.getFileName().toString())
+                    || !directory.startsWith(root)) throw new SshException(COMMAND_NOT_ALLOWED);
+            try (SftpClient sftp = SftpClientFactory.instance().createSftpClient(session))
+            {
+                if (!root.toString().equals(sftp.canonicalPath(root.toString())))
+                    throw new SshException(COMMAND_NOT_ALLOWED);
+                Path current = root;
+                SftpClient.Attributes rootAttributes = sftp.lstat(current.toString());
+                if (!rootAttributes.isDirectory() || rootAttributes.isSymbolicLink()) throw new SshException(COMMAND_NOT_ALLOWED);
+                for (Path segment : root.relativize(directory))
+                {
+                    current = current.resolve(segment);
+                    SftpClient.Attributes attributes = sftp.lstat(current.toString());
+                    if (!attributes.isDirectory() || attributes.isSymbolicLink()) throw new SshException(COMMAND_NOT_ALLOWED);
+                }
+                String path = directory.resolve(fileName).toString();
+                SftpClient.Attributes file = lstatOrNull(sftp, path);
+                if (file == null || offset >= file.getSize()) return new byte[0];
+                if (!file.isRegularFile() || file.isSymbolicLink()) throw new SshException(COMMAND_NOT_ALLOWED);
+                int length = (int) Math.min(maxBytes, file.getSize() - offset);
+                byte[] buffer = new byte[length];
+                int read = 0;
+                try (SftpClient.CloseableHandle handle = sftp.open(path, SftpClient.OpenMode.Read))
+                {
+                    while (read < length)
+                    {
+                        int amount = sftp.read(handle, offset + read, buffer, read, length - read);
+                        if (amount <= 0) break;
+                        read += amount;
+                    }
+                }
+                return read == length ? buffer : java.util.Arrays.copyOf(buffer, read);
             }
             catch (SshException e) { throw e; }
             catch (IOException e) { throw new SshException(COMMAND_FAILED); }

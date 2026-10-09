@@ -15,6 +15,7 @@ public record ServerProbeResult(Long serverId, Long accountId, Instant sampledAt
     public static ServerProbeResult failure(Long serverId, Long accountId, Instant now, String status, String code)
     {
         return new ServerProbeResult(serverId, accountId, now, 0, 0, 0, 0, 0,
-            List.of(), null, Map.of("ssh", false, "gpu", false, "systemdUser", false, "persistentUserManager", false), status, code);
+            List.of(), null, Map.of("ssh", false, "gpu", false, "systemdUser", false,
+                    "persistentUserManager", false, "appendLogs", false), status, code);
     }
 }

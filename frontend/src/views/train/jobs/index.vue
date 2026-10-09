@@ -64,7 +64,7 @@
               :disabled="!account.hasCredential" :label="`${account.linuxUsername} · ${account.authType}`" />
           </el-select>
         </el-form-item>
-        <el-alert v-if="form.serverId && !serverTrainable" title="该服务器暂不具备训练条件，请检查 SSH、GPU、systemd --user 和登录后持久运行状态。" type="warning" :closable="false" />
+        <el-alert v-if="form.serverId && !serverTrainable" title="该服务器暂不具备训练条件，请检查 SSH、GPU、systemd --user、登录后持久运行和 append 日志能力。" type="warning" :closable="false" />
         <el-form-item label="最大步数" required>
           <el-input-number v-model="form.maxSteps" :min="1" :max="5" />
         </el-form-item>
@@ -189,7 +189,7 @@ const serverTrainable = computed(() => {
   const server = selectedServer.value?.server
   return Boolean(server?.enabled && ['ONLINE', 'DEGRADED'].includes(server.status)
     && server.capabilities.ssh && server.capabilities.gpu
-    && server.capabilities.systemdUser && server.capabilities.persistentUserManager
+    && server.capabilities.systemdUser && server.capabilities.persistentUserManager && server.capabilities.appendLogs
     && selectedAccount.value?.hasCredential)
 })
 const canSubmit = computed(() => serverTrainable.value && form.serverId > 0 && form.accountId > 0
