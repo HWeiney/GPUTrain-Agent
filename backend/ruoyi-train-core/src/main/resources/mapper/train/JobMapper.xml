@@ -55,6 +55,24 @@
         LIMIT 1
     </select>
 
+    <select id="listDueSshJobs" resultMap="JobResult">
+        SELECT * FROM train_job
+        WHERE execution_mode='SSH' AND status='QUEUED' AND updated_at &lt;= #{cutoff}
+        ORDER BY updated_at, job_id LIMIT #{limit}
+    </select>
+
+    <select id="listSshToStart" resultMap="JobResult">
+        SELECT * FROM train_job
+        WHERE execution_mode='SSH' AND status='ALLOCATED'
+        ORDER BY updated_at, job_id LIMIT #{limit}
+    </select>
+
+    <select id="listSshForReconciliation" resultMap="JobResult">
+        SELECT * FROM train_job
+        WHERE execution_mode='SSH' AND status IN ('STARTING','RUNNING','STOPPING','RECONCILING','UNKNOWN','QUARANTINED')
+        ORDER BY updated_at, job_id LIMIT #{limit}
+    </select>
+
     <select id="listByOwner" resultMap="JobResult">
         SELECT * FROM train_job
         <where>
@@ -71,7 +89,7 @@
 
     <select id="countActive" resultType="int">
         SELECT COUNT(*) FROM train_job
-        WHERE status IN ('ALLOCATING', 'ALLOCATED', 'STARTING', 'RUNNING', 'STOPPING')
+        WHERE status IN ('PENDING','QUEUED','ALLOCATING','ALLOCATED','STARTING','RUNNING','STOPPING','RECONCILING','UNKNOWN','QUARANTINED')
         <if test="!isAdmin">AND owner_user_id = #{ownerUserId}</if>
     </select>
 

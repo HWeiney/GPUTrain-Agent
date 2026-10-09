@@ -19,8 +19,8 @@
           <div class="cell-key">{{ row.requestKey }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="Runner" width="100">
-        <template #default="{ row }">{{ row.runnerId ?? '-' }}</template>
+      <el-table-column label="执行目标" width="150">
+        <template #default="{ row }">{{ row.executionMode === 'SSH' ? `服务器 #${row.serverId}` : `Runner ${row.runnerId ?? '-'}` }}</template>
       </el-table-column>
       <el-table-column label="GPU 数" prop="gpuCount" width="90" />
       <el-table-column label="状态" min-width="130">
@@ -49,15 +49,28 @@
       </div>
     </div>
 
-    <el-dialog v-model="creating" title="新建训练任务" width="min(560px, calc(100vw - 24px))">
+    <el-dialog v-model="creating" title="新建训练任务" width="min(560px, calc(100vw - 24px))" @closed="invalidateDeviceRequest">
       <el-form :model="form" label-position="top">
-        <el-form-item label="训练配置"><el-input model-value="DocOwl2-SRFUND（3 卡，共享调度）" disabled /></el-form-item>
+      <el-form-item label="训练配置"><el-input model-value="DocOwl2-SRFUND（3 卡，共享调度）" disabled /></el-form-item>
+        <el-form-item label="目标服务器" required>
+          <el-select v-model="form.serverId" placeholder="选择服务器" class="full-width" @change="onServerChanged">
+            <el-option v-for="entry in servers" :key="entry.server.serverId" :value="entry.server.serverId"
+              :label="`${entry.server.name} · ${entry.server.host}`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Linux 账户" required>
+          <el-select v-model="form.accountId" placeholder="选择服务器账户" class="full-width" :disabled="!form.serverId" @change="loadServerDevices">
+            <el-option v-for="account in selectedServer?.accounts ?? []" :key="account.accountId" :value="account.accountId"
+              :disabled="!account.hasCredential" :label="`${account.linuxUsername} · ${account.authType}`" />
+          </el-select>
+        </el-form-item>
+        <el-alert v-if="form.serverId && !serverTrainable" title="该服务器暂不具备训练条件，请检查 SSH、GPU、systemd --user 和登录后持久运行状态。" type="warning" :closable="false" />
         <el-form-item label="最大步数" required>
           <el-input-number v-model="form.maxSteps" :min="1" :max="5" />
         </el-form-item>
         <el-form-item label="GPU 设备" required>
           <div v-loading="devicesLoading" class="gpu-options">
-            <p class="selection-note">选择恰好 3 张 GPU。共享进程和显存仅为最新观测，提交时后端会重新检查。</p>
+            <p class="selection-note">工作目录：/data/hanw/hw_code/gputrain-test · 选择同一服务器的 3 张 GPU，提交时后端会重新检查快照和租约。</p>
             <el-checkbox-group v-model="form.allowedGpuUuids">
               <div v-for="device in devices" :key="device.gpuUuid" class="gpu-option">
                 <el-checkbox :value="device.gpuUuid"
@@ -70,13 +83,13 @@
                 </small>
               </div>
             </el-checkbox-group>
-            <el-empty v-if="!devicesLoading && !devices.length" description="暂无 GPU 快照，请检查 Runner" :image-size="48" />
+            <el-empty v-if="!devicesLoading && !devices.length" description="选择服务器和账户后加载 GPU 状态" :image-size="48" />
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="!validGpuSelection(form.allowedGpuUuids)" @click="submit">提交</el-button>
+        <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="submit">提交</el-button>
       </template>
     </el-dialog>
 
@@ -84,12 +97,13 @@
       <template v-if="detailJob">
         <div class="job-summary">
           <el-tag :type="tagType(detailJob.status)" size="small">{{ jobStatusText(detailJob.status) }}</el-tag>
-          <span>Runner {{ detailJob.runnerId ?? '-' }}</span>
+          <span>{{ detailJob.executionMode === 'SSH' ? `服务器 #${detailJob.serverId}` : `Runner ${detailJob.runnerId ?? '-'}` }}</span>
           <span>{{ detailJob.gpuCount }} 张 GPU</span>
           <span>最低空闲显存 {{ detailJob.minMemoryMiB }} MiB/卡</span>
           <span>创建于 {{ formatTime(detailJob.createdAt) }}</span>
           <el-button size="small" @click="loadObservability(true)">刷新数据</el-button>
         </div>
+        <el-alert v-if="['UNKNOWN', 'RECONCILING'].includes(detailJob.status)" title="远端状态正在核对。为避免重复启动或释放 GPU，状态确认前资源会保持占用。" type="warning" :closable="false" />
         <el-alert v-if="monitorError" :title="monitorError" type="error" :closable="false" show-icon />
         <h3>告警</h3>
         <el-empty v-if="alerts.length === 0" description="暂无告警" :image-size="48" />
@@ -135,7 +149,8 @@ import {
 } from '@/api/train/jobs'
 import { getToken } from '@/utils/auth'
 import { ElMessageBox } from 'element-plus'
-import { listGpuDevices, type GpuDevice } from '@/api/train/devices'
+import type { GpuDevice } from '@/api/train/devices'
+import { listServers, listServerDevices, type ServerEntry } from '@/api/train/servers'
 import { deviceSelection, validGpuSelection } from './jobSelection'
 import { jobAction, jobStatusText } from './jobActions'
 import { JobLogDecoder, loadJobLogHistory, mergeJobLogs } from './jobLogStream'
@@ -143,6 +158,7 @@ import { JobLogDecoder, loadJobLogHistory, mergeJobLogs } from './jobLogStream'
 const { proxy } = getCurrentInstance()!
 const loading = ref(false)
 const jobs = ref<TrainJob[]>([])
+const servers = ref<ServerEntry[]>([])
 const hasMore = ref(false)
 const pageCursor = ref<number | undefined>()
 const loadingMore = ref(false)
@@ -164,7 +180,20 @@ let monitorGeneration = 0
 let logRefreshTimer: ReturnType<typeof setInterval> | undefined
 let listRefreshTimer: ReturnType<typeof setInterval> | undefined
 let logStreamController: AbortController | undefined
+let serverRequestGeneration = 0
+let deviceRequestGeneration = 0
 const logText = computed(() => logs.value.map((entry: JobLogEvent) => entry.text).join(''))
+const selectedServer = computed(() => servers.value.find((entry: ServerEntry) => entry.server.serverId === form.serverId))
+const selectedAccount = computed(() => selectedServer.value?.accounts.find((account: ServerEntry['accounts'][number]) => account.accountId === form.accountId))
+const serverTrainable = computed(() => {
+  const server = selectedServer.value?.server
+  return Boolean(server?.enabled && ['ONLINE', 'DEGRADED'].includes(server.status)
+    && server.capabilities.ssh && server.capabilities.gpu
+    && server.capabilities.systemdUser && server.capabilities.persistentUserManager
+    && selectedAccount.value?.hasCredential)
+})
+const canSubmit = computed(() => serverTrainable.value && form.serverId > 0 && form.accountId > 0
+  && validGpuSelection(form.allowedGpuUuids))
 
 const TERMINAL = ['SUCCEEDED', 'FAILED', 'STOPPED', 'CANCELED']
 
@@ -172,6 +201,8 @@ const form = reactive<CreateTrainJobRequest>({
   profileId: 'docowl2-srfund',
   maxSteps: 1,
   requestKey: '',
+  serverId: 0,
+  accountId: 0,
   allowedGpuUuids: []
 })
 
@@ -184,7 +215,7 @@ function tagType(status: string): 'success' | 'warning' | 'danger' | 'info' | 'p
     case 'RUNNING': return 'success'
     case 'SUCCEEDED': return 'primary'
     case 'FAILED': return 'danger'
-    case 'STOPPING': return 'warning'
+    case 'STOPPING': case 'UNKNOWN': case 'RECONCILING': return 'warning'
     case 'QUARANTINED': return 'danger'
     default: return 'info'
   }
@@ -198,15 +229,63 @@ function formatTime(value: string | null): string {
   }).format(new Date(value))
 }
 
-function openCreate() {
+async function openCreate() {
   form.requestKey = 'req-' + crypto.randomUUID()
   form.maxSteps = 1
+  form.serverId = 0
+  form.accountId = 0
   form.allowedGpuUuids = []
+  devices.value = []
   creating.value = true
   devicesLoading.value = true
-  listGpuDevices().then(response => { devices.value = response.data ?? [] })
-    .catch(() => { devices.value = []; proxy?.$modal.msgError('GPU 列表加载失败') })
-    .finally(() => { devicesLoading.value = false })
+  const generation = ++serverRequestGeneration
+  try {
+    servers.value = (await listServers()).data ?? []
+  } catch {
+    if (generation === serverRequestGeneration) {
+      servers.value = []
+      proxy?.$modal.msgError('服务器列表加载失败')
+    }
+  } finally {
+    if (generation === serverRequestGeneration) devicesLoading.value = false
+  }
+}
+
+function onServerChanged() {
+  form.accountId = 0
+  form.allowedGpuUuids = []
+  devices.value = []
+  deviceRequestGeneration++
+  devicesLoading.value = false
+}
+
+async function loadServerDevices() {
+  form.allowedGpuUuids = []
+  devices.value = []
+  const generation = ++deviceRequestGeneration
+  const { serverId, accountId } = form
+  if (!serverId || !accountId) {
+    devicesLoading.value = false
+    return
+  }
+  devicesLoading.value = true
+  try {
+    const response = await listServerDevices(serverId, accountId)
+    if (generation !== deviceRequestGeneration || form.serverId !== serverId || form.accountId !== accountId) return
+    devices.value = (response.data ?? []).map(device => ({
+      ...device, hostSignature: `server-${device.serverId}`, hasActiveLease: false
+    }))
+  } catch {
+    if (generation === deviceRequestGeneration) proxy?.$modal.msgError('服务器 GPU 状态加载失败')
+  } finally {
+    if (generation === deviceRequestGeneration) devicesLoading.value = false
+  }
+}
+
+function invalidateDeviceRequest() {
+  deviceRequestGeneration++
+  serverRequestGeneration++
+  devicesLoading.value = false
 }
 
 async function refreshJobs() {
@@ -270,7 +349,7 @@ async function act(row: TrainJob) {
   try {
     if (action === 'cancel') await cancelTrainJob(row.jobId)
     else await stopTrainJob(row.jobId)
-    proxy?.$modal.msgSuccess(action === 'cancel' ? '任务已取消' : '停止指令已下发，请等待任务状态更新')
+    proxy?.$modal.msgSuccess(action === 'cancel' ? '任务已取消' : '已发出停止请求，请等待远端状态确认')
     await refreshJobs()
   } catch (error) {
     proxy?.$modal.msgError(error instanceof Error ? error.message : `${label}失败`)
@@ -330,6 +409,7 @@ async function loadTelemetry() {
 
 async function openDetails(row: TrainJob) {
   stopLogRefresh()
+  invalidateDeviceRequest()
   detailJob.value = row
   logs.value = []
   metrics.value = []
@@ -407,6 +487,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopLogRefresh()
+  invalidateDeviceRequest()
   if (listRefreshTimer) clearInterval(listRefreshTimer)
 })
 </script>
@@ -432,6 +513,7 @@ onBeforeUnmount(() => {
 .list-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; color: var(--el-text-color-secondary); font-size: 13px; }
 .list-actions { display: flex; gap: 8px; }
 .gpu-options { width: 100%; max-height: 330px; overflow: auto; }
+.full-width { width: 100%; }
 .selection-note { margin: 0 0 10px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .gpu-option { padding: 9px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
 .gpu-option small { display: block; margin-left: 24px; color: var(--el-text-color-secondary); line-height: 1.5; }

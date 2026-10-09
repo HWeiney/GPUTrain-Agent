@@ -19,6 +19,12 @@ public interface JobMapper
 
     JobRecord findByCommandUuid(@Param("commandUuid") String commandUuid);
 
+    List<JobRecord> listDueSshJobs(@Param("cutoff") Instant cutoff, @Param("limit") int limit);
+
+    List<JobRecord> listSshToStart(@Param("limit") int limit);
+
+    List<JobRecord> listSshForReconciliation(@Param("limit") int limit);
+
     /** Lists jobs for the data scope; admins see all, others only their own jobs. */
     List<JobRecord> listByOwner(@Param("ownerUserId") Long ownerUserId,
             @Param("isAdmin") boolean isAdmin, @Param("limit") int limit,

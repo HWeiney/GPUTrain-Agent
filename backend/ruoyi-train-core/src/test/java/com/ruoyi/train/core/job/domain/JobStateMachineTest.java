@@ -79,6 +79,15 @@ class JobStateMachineTest
     }
 
     @Test
+    void allocatedJobsCanCancelAndUncertainJobsCanRequestStop()
+    {
+        JobStateMachine.requireTransition(JobStatus.ALLOCATED, JobStatus.CANCELED);
+        JobStateMachine.requireTransition(JobStatus.STARTING, JobStatus.STOPPING);
+        JobStateMachine.requireTransition(JobStatus.UNKNOWN, JobStatus.STOPPING);
+        JobStateMachine.requireTransition(JobStatus.RECONCILING, JobStatus.STOPPING);
+    }
+
+    @Test
     void runningCanStopThenStopped()
     {
         JobStateMachine.requireTransition(JobStatus.RUNNING, JobStatus.STOPPING);

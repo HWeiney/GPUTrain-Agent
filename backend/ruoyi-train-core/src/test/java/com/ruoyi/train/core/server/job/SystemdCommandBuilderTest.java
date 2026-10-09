@@ -56,7 +56,7 @@ class SystemdCommandBuilderTest
         assertThrows(IllegalArgumentException.class, () -> builder.script(identity,
                 profile("/tmp", List.of("/home/alice/training/run.sh")), List.of("GPU-1", "GPU-2", "GPU-3")));
         assertThrows(IllegalArgumentException.class, () -> builder.script(identity,
-                profile("/home/alice/training", List.of("/tmp/escape.sh")), List.of("GPU-1", "GPU-2", "GPU-3")));
+                profile("/home/alice/training", List.of("/home/alice/training/../escape.sh")), List.of("GPU-1", "GPU-2", "GPU-3")));
         assertThrows(IllegalArgumentException.class, () -> builder.script(identity,
                 profile("/home/alice/training", List.of("/home/alice/training/a.sh")), List.of("GPU-1;touch /tmp/x", "GPU-2", "GPU-3")));
         assertThrows(IllegalArgumentException.class, () -> builder.script(identity,

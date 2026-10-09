@@ -21,6 +21,8 @@ describe('train jobs api', () => {
       maxSteps: 1,
       allowedGpuUuids: ['GPU-a', 'GPU-b', 'GPU-c'],
       requestKey: 'req-1',
+      serverId: 4,
+      accountId: 8,
     }
 
     createTrainJob(payload)

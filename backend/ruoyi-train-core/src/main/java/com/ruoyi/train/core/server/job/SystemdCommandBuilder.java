@@ -75,7 +75,6 @@ public final class SystemdCommandBuilder
             checkedText(argument, 4096);
             Path argumentPath = Path.of(argument);
             if (!argumentPath.normalize().equals(argumentPath) || hasParentTraversal(argumentPath)) throw invalid();
-            if (argumentPath.isAbsolute()) requireWithin(job.allowedRoot(), argument);
         }
         List<String> gpus = checkedGpus(gpuUuids);
         StringBuilder script = new StringBuilder("#!/usr/bin/env bash\nset -euo pipefail\ncd -- ")

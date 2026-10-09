@@ -27,6 +27,7 @@ import com.ruoyi.train.runner.protocol.RunnerProtocolException;
 import com.ruoyi.train.core.server.job.SshJobSubmissionValidator;
 import com.ruoyi.train.core.server.service.ServerDeviceQueryService;
 import com.ruoyi.train.core.server.service.ServerInventoryService;
+import com.ruoyi.train.core.server.gpu.SshGpuLeaseService;
 
 /**
  * Orchestrates the training job lifecycle: submission, atomic GPU allocation, START/STOP
@@ -45,12 +46,13 @@ public class JobService
     private final ServerInventoryService serverInventory;
     private final ServerDeviceQueryService serverDevices;
     private final SshJobSubmissionValidator sshSubmissionValidator;
+    private final SshGpuLeaseService sshLeases;
 
     @Autowired
     public JobService(JobMapper jobMapper, GpuLeaseService leaseService,
             RunnerCommandService commandService, RunnerCommandMapper commandMapper,
             ObjectMapper json, ServerInventoryService serverInventory,
-            ServerDeviceQueryService serverDevices)
+            ServerDeviceQueryService serverDevices, SshGpuLeaseService sshLeases)
     {
         this.jobMapper = Objects.requireNonNull(jobMapper);
         this.leaseService = Objects.requireNonNull(leaseService);
@@ -60,12 +62,13 @@ public class JobService
         this.serverInventory = serverInventory;
         this.serverDevices = serverDevices;
         this.sshSubmissionValidator = new SshJobSubmissionValidator();
+        this.sshLeases = sshLeases;
     }
 
     public JobService(JobMapper jobMapper, GpuLeaseService leaseService,
             RunnerCommandService commandService, RunnerCommandMapper commandMapper, ObjectMapper json)
     {
-        this(jobMapper, leaseService, commandService, commandMapper, json, null, null);
+        this(jobMapper, leaseService, commandService, commandMapper, json, null, null, null);
     }
 
     @Transactional
@@ -131,6 +134,66 @@ public class JobService
                 prepared.unitName(), submission.workingDirectory());
         if (jobMapper.insert(queued) != 1) throw new IllegalStateException("Unable to queue SSH job");
         return jobMapper.findByRequestKey(submission.requestKey());
+    }
+
+    @Transactional
+    public boolean allocateSshJob(long jobId, Instant now)
+    {
+        if (sshLeases == null || serverDevices == null) throw new IllegalStateException("SSH scheduler is not enabled");
+        JobRecord job = requireJob(jobId);
+        if (!"SSH".equals(job.executionMode()) || !JobStatus.QUEUED.name().equals(job.status())) return false;
+        if (jobMapper.compareAndSetStatus(jobId, JobStatus.QUEUED.name(), JobStatus.ALLOCATING.name(), now) != 1)
+            return false;
+        List<String> selected;
+        try { selected = json.readValue(job.allowedGpuUuidsJson(), new com.fasterxml.jackson.core.type.TypeReference<>() {}); }
+        catch (Exception invalid) { throw new IllegalStateException("GPU_SELECTION_CORRUPT"); }
+        var devices = serverDevices.list(job.serverId(), job.accountId(), job.ownerUserId());
+        Map<String, ServerDeviceQueryService.DeviceView> byUuid = devices.stream()
+                .collect(Collectors.toMap(ServerDeviceQueryService.DeviceView::gpuUuid, device -> device, (a, b) -> a));
+        boolean available = selected.size() == 3 && selected.stream().allMatch(uuid -> {
+            var device = byUuid.get(uuid);
+            return device != null && device.schedulable();
+        });
+        if (!available)
+        {
+            if (jobMapper.compareAndSetStatus(jobId, JobStatus.ALLOCATING.name(), JobStatus.QUEUED.name(), now) != 1)
+                throw new IllegalStateException("Job status changed during allocation");
+            return false;
+        }
+        if (!sshLeases.tryAcquire(jobId, job.jobUuid(), job.serverId(), job.accountId(), selected, now))
+        {
+            if (jobMapper.compareAndSetStatus(jobId, JobStatus.ALLOCATING.name(), JobStatus.QUEUED.name(), now) != 1)
+                throw new IllegalStateException("Job status changed during allocation");
+            return false;
+        }
+        if (jobMapper.compareAndSetStatus(jobId, JobStatus.ALLOCATING.name(), JobStatus.ALLOCATED.name(), now) != 1)
+            throw new IllegalStateException("Unable to finalize SSH GPU allocation");
+        return true;
+    }
+
+    @Transactional
+    public JobRecord claimSshStart(long jobId, Instant now)
+    {
+        JobRecord job = requireJob(jobId);
+        if (!"SSH".equals(job.executionMode()) || !JobStatus.ALLOCATED.name().equals(job.status())) return null;
+        if (jobMapper.compareAndSetStatus(jobId, JobStatus.ALLOCATED.name(), JobStatus.STARTING.name(), now) != 1)
+            return null;
+        return jobMapper.findById(jobId);
+    }
+
+    @Transactional
+    public JobRecord updateSshStatus(long jobId, String expectedStatus, JobStatus next, Instant now)
+    {
+        JobRecord job = requireJob(jobId);
+        if (!"SSH".equals(job.executionMode())) throw new IllegalArgumentException("SSH_JOB_REQUIRED");
+        JobStatus current = JobStatus.valueOf(job.status());
+        if (!current.name().equals(expectedStatus)) return job;
+        if (current == next) return job;
+        JobStateMachine.requireTransition(current, next);
+        if (jobMapper.compareAndSetStatus(jobId, current.name(), next.name(), now) != 1)
+            return jobMapper.findById(jobId);
+        if (next.isTerminal() && sshLeases != null) sshLeases.releaseForJob(jobId, now);
+        return jobMapper.findById(jobId);
     }
 
     @Transactional
@@ -204,12 +267,29 @@ public class JobService
         JobRecord job = requireJob(jobId);
         JobStatus status = JobStatus.valueOf(job.status());
         if (status == JobStatus.CANCELED) return job;
-        if ((status != JobStatus.PENDING && status != JobStatus.QUEUED)
+        boolean sshAllocated = "SSH".equals(job.executionMode()) && status == JobStatus.ALLOCATED;
+        if ((status != JobStatus.PENDING && status != JobStatus.QUEUED && !sshAllocated)
                 || job.startCommandId() != null)
             throw new IllegalStateException("Job can no longer be canceled; refresh its status");
         JobStateMachine.requireTransition(status, JobStatus.CANCELED);
         if (jobMapper.compareAndSetStatus(jobId, status.name(), JobStatus.CANCELED.name(), now) != 1)
             throw new IllegalStateException("Job status changed; refresh and retry");
+        if (sshAllocated && sshLeases != null) sshLeases.releaseForJob(jobId, now);
+        return jobMapper.findById(jobId);
+    }
+
+    @Transactional
+    public JobRecord beginSshStop(long jobId, Instant now)
+    {
+        JobRecord job = requireJob(jobId);
+        if (!"SSH".equals(job.executionMode())) throw new IllegalArgumentException("SSH_JOB_REQUIRED");
+        JobStatus status = JobStatus.valueOf(job.status());
+        if (status.isTerminal()) return job;
+        if (status == JobStatus.QUEUED || status == JobStatus.ALLOCATED) return cancel(jobId, now);
+        if (status == JobStatus.STOPPING) return job;
+        JobStateMachine.requireTransition(status, JobStatus.STOPPING);
+        if (jobMapper.compareAndSetStatus(jobId, status.name(), JobStatus.STOPPING.name(), now) != 1)
+            return jobMapper.findById(jobId);
         return jobMapper.findById(jobId);
     }
 

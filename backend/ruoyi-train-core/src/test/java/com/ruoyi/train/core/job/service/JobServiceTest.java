@@ -5,12 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import com.ruoyi.train.core.server.gpu.SshGpuLeaseMapper;
+import com.ruoyi.train.core.server.gpu.SshGpuLeaseRecord;
+import com.ruoyi.train.core.server.gpu.SshGpuLeaseService;
+import com.ruoyi.train.core.server.service.ServerDeviceQueryService.DeviceView;
+import com.ruoyi.train.core.server.service.ServerInventoryService.ServerDetail;
+import com.ruoyi.train.core.server.service.ServerInventoryService.ServerView;
+import com.ruoyi.train.core.server.service.ServerInventoryService.ServerAccountView;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.train.core.gpu.domain.GpuLeaseRecord;
@@ -64,6 +73,50 @@ class JobServiceTest
         assertThrows(IllegalStateException.class, () -> service.submit(ssh, NOW));
         assertEquals(0, leaseService.allocateCalls);
         assertEquals(0, commandService.createCalls);
+    }
+
+    @Test
+    void sshSubmissionQueuesWithoutRunnerThenAtomicallyAllocatesSelectedServerGpus()
+    {
+        List<String> gpus = List.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "GPU-cccccccc-cccc-cccc-cccc-cccccccccccc");
+        JobSubmission ssh = new JobSubmission(10L, 3, 0L, java.util.Set.copyOf(gpus),
+                java.util.Set.of(), "req-ssh-queue", "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
+                List.of("run.sh"), Map.of(), 3600, 70000, true, 4L, 8L);
+        InMemoryJobMapper mapper = new InMemoryJobMapper();
+        var deviceQuery = new com.ruoyi.train.core.server.service.ServerDeviceQueryService(null, null, null, null, null) {
+            @Override public List<DeviceView> list(Long serverId, Long accountId, Long ownerUserId) {
+                return gpus.stream().map(uuid -> new DeviceView(serverId, accountId, uuid, "GPU", "OBSERVED",
+                        true, NOW, 80000, 0, 0, "DISABLED", 0)).toList();
+            }
+        };
+        var inventory = new com.ruoyi.train.core.server.service.ServerInventoryService(null, null, null, null,
+                null, null, null, null) {
+            @Override public ServerDetail detail(Long serverId, Long accountId, Long userId) {
+                return new ServerDetail(new ServerView(4L, "node", "host", 22, "SHA256:test", true,
+                        NOW, NOW, "ONLINE", Map.of("ssh", true, "gpu", true, "systemdUser", true,
+                                "persistentUserManager", true)),
+                        List.of(new ServerAccountView(8L, 4L, userId, "alice", "PRIVATE_KEY", true, "/data/hanw")), null);
+            }
+        };
+        var leases = new MemorySshLeases();
+        JobService sshService = new JobService(mapper, leaseService, commandService, commandMapper,
+                new ObjectMapper(), inventory, deviceQuery, leases.service());
+
+        JobRecord queued = sshService.submit(ssh, NOW);
+        assertEquals("SSH", queued.executionMode());
+        assertEquals(JobStatus.QUEUED.name(), queued.status());
+        assertEquals(4L, queued.serverId());
+        assertNull(queued.runnerId());
+        assertNull(queued.startCommandId());
+        assertEquals(0, commandService.createCalls);
+
+        assertTrue(sshService.allocateSshJob(queued.jobId(), NOW));
+        assertEquals(JobStatus.ALLOCATED.name(), mapper.findById(queued.jobId()).status());
+        assertEquals(3, leases.active.size());
+        assertFalse(sshService.allocateSshJob(queued.jobId(), NOW));
+        assertEquals(1, mapper.store.size());
     }
 
     @Test
@@ -279,7 +332,8 @@ class JobServiceTest
                     job.allowedGpuUuidsJson(), job.deniedGpuUuidsJson(),
                     job.processSpecJson(), job.status(), job.requestKey(),
                     job.startCommandId(), job.stopCommandId(), job.createdAt(),
-                    job.updatedAt());
+                    job.updatedAt(), job.executionMode(), job.serverId(), job.accountId(),
+                    job.remoteUnitName(), job.remoteWorkingDirectory());
             store.put(id, persisted);
             return 1;
         }
@@ -302,6 +356,10 @@ class JobServiceTest
                     || (j.stopCommandId() != null && commandMapper.findById(j.stopCommandId()).commandUuid().equals(commandUuid)))
                     .findFirst().orElse(null);
         }
+
+        @Override public List<JobRecord> listDueSshJobs(Instant cutoff, int limit) { return List.of(); }
+        @Override public List<JobRecord> listSshToStart(int limit) { return List.of(); }
+        @Override public List<JobRecord> listSshForReconciliation(int limit) { return List.of(); }
 
         @Override
         public List<JobRecord> listByOwner(Long ownerUserId, boolean isAdmin, int limit, Long beforeJobId)
@@ -366,7 +424,18 @@ class JobServiceTest
         return new JobRecord(c.jobId(), c.jobUuid(), c.ownerUserId(), c.runnerId(),
                 c.gpuCount(), c.minMemoryMiB(), c.allowedGpuUuidsJson(),
                 c.deniedGpuUuidsJson(), c.processSpecJson(), (String) v1, c.requestKey(),
-                c.startCommandId(), c.stopCommandId(), c.createdAt(), (Instant) v2);
+                c.startCommandId(), c.stopCommandId(), c.createdAt(), (Instant) v2,
+                c.executionMode(), c.serverId(), c.accountId(), c.remoteUnitName(), c.remoteWorkingDirectory());
+    }
+
+    private static final class MemorySshLeases implements SshGpuLeaseMapper
+    {
+        final Map<String, SshGpuLeaseRecord> active = new HashMap<>();
+        SshGpuLeaseService service() { return new SshGpuLeaseService(this); }
+        @Override public int insert(SshGpuLeaseRecord lease) { active.put(lease.serverId() + ":" + lease.gpuUuid(), lease); return 1; }
+        @Override public List<SshGpuLeaseRecord> findByJob(long jobId) { return active.values().stream().filter(l -> l.jobId() == jobId).toList(); }
+        @Override public SshGpuLeaseRecord findActiveByServerGpu(long serverId, String gpuUuid) { return active.get(serverId + ":" + gpuUuid); }
+        @Override public int release(long leaseId, Instant releasedAt) { return 1; }
     }
 
     private static final class InMemoryCommandMapper implements RunnerCommandMapper

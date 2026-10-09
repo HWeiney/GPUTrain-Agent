@@ -67,6 +67,9 @@ class SshJobSchemaContractTest
             new XMLMapperBuilder(input, configuration, resource, configuration.getSqlFragments()).parse();
         }
         assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.findById"));
+        assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listDueSshJobs"));
+        assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listSshToStart"));
+        assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.listSshForReconciliation"));
         assertTrue(configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.findById")
             .getBoundSql(java.util.Map.of("jobId", 1L)).getSql().contains("SELECT"));
         String insertSql = configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.insert")

@@ -6,6 +6,11 @@ export interface TrainJob {
   jobId: number
   jobUuid: string
   ownerUserId: number
+  executionMode?: 'SSH' | 'RUNNER_LEGACY'
+  serverId?: number | null
+  accountId?: number | null
+  remoteUnitName?: string | null
+  remoteWorkingDirectory?: string | null
   runnerId: number | null
   gpuCount: number
   minMemoryMiB: number
@@ -21,6 +26,8 @@ export interface CreateTrainJobRequest {
   profileId: 'docowl2-srfund'
   maxSteps: number
   requestKey: string
+  serverId: number
+  accountId: number
   allowedGpuUuids: string[]
 }
 

@@ -17,6 +17,7 @@ import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.train.core.job.domain.JobRecord;
 import com.ruoyi.train.core.job.service.JobService;
 import com.ruoyi.train.core.job.service.JobSubmission;
+import com.ruoyi.train.core.server.job.SshJobDispatcher;
 
 /**
  * Administrative API for training jobs. The authenticated user is always the owner;
@@ -28,10 +29,12 @@ import com.ruoyi.train.core.job.service.JobSubmission;
 public class JobAdminController
 {
     private final JobService jobService;
+    private final SshJobDispatcher sshJobDispatcher;
 
-    public JobAdminController(JobService jobService)
+    public JobAdminController(JobService jobService, SshJobDispatcher sshJobDispatcher)
     {
         this.jobService = jobService;
+        this.sshJobDispatcher = sshJobDispatcher;
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:manage')")
@@ -95,7 +98,8 @@ public class JobAdminController
     public AjaxResult stop(@PathVariable long jobId)
     {
         long userId = SecurityUtils.getUserId();
-        jobService.getOwned(jobId, userId, SecurityUtils.isAdmin(userId));
+        JobRecord job = jobService.getOwned(jobId, userId, SecurityUtils.isAdmin(userId));
+        if ("SSH".equals(job.executionMode())) return AjaxResult.success(sshJobDispatcher.stop(jobId, Instant.now()));
         return AjaxResult.success(jobService.stop(jobId, Instant.now()));
     }
 
