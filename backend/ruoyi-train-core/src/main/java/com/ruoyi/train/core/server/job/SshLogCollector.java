@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -43,6 +44,7 @@ public final class SshLogCollector
     private final SystemdCommandBuilder commands = new SystemdCommandBuilder();
     private final AlertEvaluator alerts = new AlertEvaluator();
 
+    @Autowired
     public SshLogCollector(JobMapper jobs, ServerMapper servers, ServerAccountMapper accounts,
             SshGateway gateway, JdbcTemplate jdbc, ObjectMapper json, PlatformTransactionManager manager)
     { this(jobs, servers, accounts, gateway, jdbc, json, manager, Clock.systemUTC()); }

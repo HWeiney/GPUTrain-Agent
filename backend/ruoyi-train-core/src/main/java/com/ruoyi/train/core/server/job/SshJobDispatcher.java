@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -34,6 +35,7 @@ public final class SshJobDispatcher
     private final ObjectMapper json;
     private final Clock clock;
 
+    @Autowired
     public SshJobDispatcher(JobMapper jobs, JobService jobService, ServerMapper servers,
             ServerAccountMapper accounts, SshRemoteJobClient remote, ObjectMapper json)
     {

@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import com.ruoyi.train.core.job.domain.JobRecord;
@@ -29,6 +30,7 @@ public final class SshJobReconciler
     private final Clock clock;
     private final SystemdCommandBuilder commands = new SystemdCommandBuilder();
 
+    @Autowired
     public SshJobReconciler(JobMapper jobs, JobService jobService, ServerMapper servers,
             ServerAccountMapper accounts, SshRemoteJobClient remote)
     { this(jobs, jobService, servers, accounts, remote, Clock.systemUTC()); }
