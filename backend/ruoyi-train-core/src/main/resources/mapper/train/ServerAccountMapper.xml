@@ -51,6 +51,13 @@
         ORDER BY account_id
     </select>
 
+    <select id="listEnabledForProbe" resultMap="ServerAccountResult">
+        SELECT <include refid="publicColumns"/> FROM train_server_account
+        WHERE enabled = 1 AND has_credential = 1 AND account_id &gt; #{afterAccountId}
+            AND server_id IN (SELECT server_id FROM train_server WHERE enabled = 1)
+        ORDER BY account_id LIMIT #{limit}
+    </select>
+
     <select id="findCredentialsByAuthorizedAccountId" resultMap="ServerAccountResult">
         SELECT account_id, server_id, owner_user_id, linux_username, auth_type,
             credential_ciphertext AS credential_secret, passphrase_ciphertext AS passphrase_secret,

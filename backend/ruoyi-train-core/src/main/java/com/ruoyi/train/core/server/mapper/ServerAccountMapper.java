@@ -18,6 +18,10 @@ public interface ServerAccountMapper
     ServerAccountRecord findCredentialsByAuthorizedAccountId(
             @Param("authorizedAccountId") Long authorizedAccountId);
 
+    /** Internal scheduler metadata only; enabled servers/accounts, without credential columns. */
+    List<ServerAccountRecord> listEnabledForProbe(@Param("afterAccountId") Long afterAccountId,
+            @Param("limit") int limit);
+
     int updateCredentials(@Param("authorizedAccountId") Long authorizedAccountId,
             @Param("credentialCiphertext") String credentialCiphertext,
             @Param("passphraseCiphertext") String passphraseCiphertext,
