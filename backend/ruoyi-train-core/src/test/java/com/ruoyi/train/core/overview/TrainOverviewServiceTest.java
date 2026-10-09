@@ -57,6 +57,18 @@ class TrainOverviewServiceTest
         assertEquals(1, new TrainOverviewService(jobs, runners, redis).getOverview(42L, false).onlineRunners());
     }
 
+    @Test
+    void addsOwnerScopedOnlineServersWithoutChangingRunnerCount() {
+        var inventory=(com.ruoyi.train.core.server.mapper.ServerInventoryMapper) Proxy.newProxyInstance(
+            getClass().getClassLoader(),new Class[]{com.ruoyi.train.core.server.mapper.ServerInventoryMapper.class},(p,m,a) -> {
+                assertEquals("countOnline",m.getName()); assertEquals(42L,a[0]); assertEquals(false,a[1]);
+                assertEquals(30,java.time.Duration.between((java.time.Instant)a[2],(java.time.Instant)a[3]).toSeconds());
+                return 3;
+            });
+        var overview=new TrainOverviewService(mapper(JobMapper.class,2),mapper(RunnerMapper.class,List.of()),new RedisTemplate<>(),inventory).getOverview(42L,false);
+        assertEquals(3,overview.onlineServers()); assertEquals(0,overview.onlineRunners()); assertEquals(2,overview.activeExperiments());
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T mapper(Class<T> type, Object result) {
         return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type },

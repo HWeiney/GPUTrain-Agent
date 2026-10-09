@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.mapper.ServerInventoryMapper">
+ <select id="findByAddress" resultMap="com.ruoyi.train.core.server.mapper.ServerMapper.ServerResult">
+  SELECT * FROM train_server WHERE host = #{host} AND port = #{port}
+ </select>
+ <select id="findByFingerprint" resultMap="com.ruoyi.train.core.server.mapper.ServerMapper.ServerResult">
+  SELECT * FROM train_server WHERE host_key_sha256 = #{fingerprint} ORDER BY server_id
+ </select>
+ <select id="userExists" resultType="boolean">
+  SELECT EXISTS(SELECT 1 FROM sys_user WHERE user_id = #{userId} AND del_flag = '0' AND status = '0')
+ </select>
+ <select id="countOnline" resultType="int">
+  SELECT COUNT(*) FROM train_server s WHERE s.enabled = 1 AND EXISTS (
+   SELECT 1 FROM train_server_account a WHERE a.server_id = s.server_id AND a.enabled = 1
+   AND a.status IN ('ONLINE','DEGRADED') AND a.last_probe_at = a.last_success_at
+   AND a.last_success_at &gt;= #{freshAfter} AND a.last_success_at &lt;= #{now}
+   <if test="!isAdmin">AND a.owner_user_id = #{ownerUserId}</if>
+  )
+ </select>
+ <update id="updateMetadata">
+  UPDATE train_server SET name=#{name}, host_key_sha256=#{fingerprint}, enabled=#{enabled}, updated_at=#{updatedAt}
+  WHERE server_id=#{serverId}
+ </update>
+</mapper>

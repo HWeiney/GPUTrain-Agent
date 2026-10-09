@@ -10,12 +10,21 @@ import com.ruoyi.train.core.runner.mapper.RunnerMapper;
 @Service
 public class TrainOverviewService
 {
+    private final com.ruoyi.train.core.server.mapper.ServerInventoryMapper servers;
     private final JobMapper jobs;
     private final RunnerMapper runners;
     private final RedisTemplate<Object, Object> redis;
 
     public TrainOverviewService(JobMapper jobs, RunnerMapper runners, RedisTemplate<Object, Object> redis)
     {
+        this(jobs, runners, redis, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TrainOverviewService(JobMapper jobs, RunnerMapper runners, RedisTemplate<Object, Object> redis,
+            com.ruoyi.train.core.server.mapper.ServerInventoryMapper servers)
+    {
+        this.servers = servers;
         this.jobs = jobs;
         this.runners = runners;
         this.redis = redis;
@@ -43,6 +52,8 @@ public class TrainOverviewService
             if (runnerIds.size() < pageSize) break;
             afterRunnerId = runnerIds.get(runnerIds.size() - 1);
         }
-        return new TrainOverview("READY", active, online);
+        java.time.Instant now = java.time.Instant.now();
+        int onlineServers = servers == null ? 0 : servers.countOnline(userId, isAdmin, now.minusSeconds(30), now);
+        return new TrainOverview("READY", active, online, onlineServers);
     }
 }

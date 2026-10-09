@@ -61,3 +61,27 @@ WHERE (
       SELECT 1 FROM sys_role_menu role_menu
       WHERE role_menu.role_id = 1 AND role_menu.menu_id = menu.menu_id
   );
+
+-- SSH inventory permissions are deliberately distinct from Runner enrollment permissions.
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '服务器连接', parent.menu_id, 4, 'servers', 'train/servers/index', 1, 0, 'C',
+       '0', '0', 'train:server:view', 'server', 'admin', NOW(), '本人服务器账户与资源清单'
+FROM sys_menu parent
+WHERE parent.menu_name = 'GPUTrain' AND parent.parent_id = 0
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:server:view');
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '管理服务器', parent.menu_id, 1, '#', 1, 0, 'F',
+       '0', '0', 'train:server:manage', '#', 'admin', NOW(), '服务器及账户授权管理'
+FROM sys_menu parent
+WHERE parent.perms = 'train:server:view'
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:server:manage');
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1, menu.menu_id FROM sys_menu menu
+WHERE menu.perms IN ('train:server:view', 'train:server:manage')
+  AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = menu.menu_id);
