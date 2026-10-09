@@ -50,6 +50,14 @@ class SshRemoteJobClientTest
         assertFalse(gateway.connected);
     }
 
+    @Test void rejectsWorkDirectoryOutsideSavedAccountRootBeforeConnecting()
+    {
+        FakeGateway gateway = new FakeGateway(ACTIVE);
+        var forged = builder.identity(72, job.jobUuid(), 4, 8, "/tmp/attacker");
+        assertThrows(IllegalArgumentException.class, () -> new SshRemoteJobClient(gateway).inspect(server, account, forged));
+        assertFalse(gateway.connected);
+    }
+
     private static List<String> gpus() { return List.of("GPU-1234-abcd", "GPU-5678-efab", "GPU-9012-cdef"); }
 
     private static final class FakeGateway implements SshGateway

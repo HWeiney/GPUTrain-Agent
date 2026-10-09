@@ -79,12 +79,14 @@ public final class SshRemoteJobClient
         return SystemdUnitState.parse(response.stdout());
     }
 
-    private static void validate(ServerRecord server, ServerAccountRecord account,
+    private void validate(ServerRecord server, ServerAccountRecord account,
             SystemdCommandBuilder.RemoteJobIdentity job)
     {
         if (server == null || account == null || job == null || !server.enabled() || !account.enabled()
                 || !Objects.equals(server.serverId(), job.serverId())
                 || !Objects.equals(account.serverId(), server.serverId())
-                || !Objects.equals(account.accountId(), job.accountId())) throw new IllegalArgumentException("SERVER_ACCOUNT_UNAVAILABLE");
+                || !Objects.equals(account.accountId(), job.accountId()) || account.allowedRoot() == null
+                || !commands.identity(job.jobId(), job.jobUuid(), server.serverId(), account.accountId(), account.allowedRoot()).equals(job))
+            throw new IllegalArgumentException("SERVER_ACCOUNT_UNAVAILABLE");
     }
 }
