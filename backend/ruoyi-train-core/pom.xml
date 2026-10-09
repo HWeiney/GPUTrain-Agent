@@ -12,6 +12,12 @@
     <description>GPUTrain实验与资源核心领域</description>
 
     <dependencies>
+        <!-- SSHD 2.20.0 requires an optional provider for Ed25519. Include its PEM parser too. -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.86</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.sshd</groupId>
             <artifactId>sshd-core</artifactId>

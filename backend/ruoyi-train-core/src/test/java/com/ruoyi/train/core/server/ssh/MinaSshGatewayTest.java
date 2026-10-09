@@ -14,6 +14,7 @@ import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.ExitCallback;
 import org.apache.sshd.common.keyprovider.KeyPairProvider;
 import org.apache.sshd.common.config.keys.KeyUtils;
+import org.apache.sshd.common.util.security.SecurityUtils;
 import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyPairResourceWriter;
 import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyEncryptionContext;
 import org.junit.jupiter.api.*;
@@ -98,6 +99,56 @@ class MinaSshGatewayTest
             assertEquals("authenticated", gateway().withVerifiedSession(server(fingerprint()), account, session -> "authenticated"));
         }
         assertTrue(authentications.get() >= 2);
+    }
+
+    @Test void deployedClasspathSupportsEd25519()
+    {
+        assertTrue(SecurityUtils.isEDDSACurveSupported(), "The production SSH dependencies must support Ed25519");
+    }
+
+    @Test void plainOpenSshEd25519PrivateKeyAuthenticates() throws Exception
+    {
+        authenticateEd25519PrivateKey(false);
+    }
+
+    @Test void encryptedOpenSshEd25519PrivateKeyAuthenticates() throws Exception
+    {
+        authenticateEd25519PrivateKey(true);
+    }
+
+    @Test void ed25519HostKeyCanBePreviewedPinnedAndRejectRotation() throws Exception
+    {
+        hostKey = KeyUtils.generateKeyPair("ssh-ed25519", 256);
+        sshd.setKeyPairProvider(KeyPairProvider.wrap(hostKey));
+        var gateway = gateway();
+        var preview = gateway.preview("127.0.0.1", sshd.getPort(), timeout);
+        assertEquals("ssh-ed25519", preview.algorithm());
+        assertEquals(fingerprint(), preview.sha256());
+        assertEquals(0, authentications.get());
+        assertEquals("verified", gateway.withVerifiedSession(server(preview.sha256()), password("password"), session -> "verified"));
+        assertTrue(authentications.get() > 0);
+        authentications.set(0);
+        sshd.setKeyPairProvider(KeyPairProvider.wrap(KeyUtils.generateKeyPair("ssh-ed25519", 256)));
+        assertCode(HOST_KEY_CHANGED, () -> gateway.withVerifiedSession(server(preview.sha256()), password("password"), session -> null));
+        assertEquals(0, authentications.get());
+    }
+
+    private void authenticateEd25519PrivateKey(boolean encrypted) throws Exception
+    {
+        userKey = KeyUtils.generateKeyPair("ssh-ed25519", 256);
+        var output = new ByteArrayOutputStream();
+        OpenSSHKeyEncryptionContext options = null;
+        if (encrypted)
+        {
+            options = new OpenSSHKeyEncryptionContext();
+            options.setCipherType("256");
+            options.setPassword("ed25519-test-passphrase");
+        }
+        OpenSSHKeyPairResourceWriter.INSTANCE.writePrivateKey(userKey, "ed25519-test", options, output);
+        var account = account("PRIVATE_KEY", output.toString(StandardCharsets.UTF_8),
+            encrypted ? "ed25519-test-passphrase" : null);
+        assertEquals("authenticated", gateway().withVerifiedSession(server(fingerprint()), account, session -> "authenticated"));
+        assertTrue(authentications.get() > 0);
     }
 
     @Test void unconfirmedAndChangedFingerprintsRejectBeforeAuthentication()
