@@ -18,6 +18,11 @@
             <arg column="stop_command_id" javaType="java.lang.Long"/>
             <arg column="created_at" javaType="java.time.Instant"/>
             <arg column="updated_at" javaType="java.time.Instant"/>
+            <arg column="execution_mode" javaType="java.lang.String"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="account_id" javaType="java.lang.Long"/>
+            <arg column="remote_unit_name" javaType="java.lang.String"/>
+            <arg column="remote_working_directory" javaType="java.lang.String"/>
         </constructor>
     </resultMap>
 

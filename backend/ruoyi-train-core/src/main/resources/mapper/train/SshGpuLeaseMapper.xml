@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.gpu.SshGpuLeaseMapper">
+    <resultMap id="LeaseResult" type="com.ruoyi.train.core.server.gpu.SshGpuLeaseRecord">
+        <constructor>
+            <idArg column="lease_id" javaType="java.lang.Long"/>
+            <arg column="lease_uuid" javaType="java.lang.String"/>
+            <arg column="job_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="account_id" javaType="java.lang.Long"/>
+            <arg column="gpu_uuid" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="acquired_at" javaType="java.time.Instant"/>
+            <arg column="expires_at" javaType="java.time.Instant"/>
+            <arg column="renewed_at" javaType="java.time.Instant"/>
+            <arg column="released_at" javaType="java.time.Instant"/>
+            <arg column="attempt" javaType="_int"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.gpu.SshGpuLeaseRecord">
+        INSERT INTO train_server_gpu_lease
+            (lease_uuid,job_id,server_id,account_id,gpu_uuid,status,idempotency_key,
+             acquired_at,expires_at,renewed_at,released_at,attempt,created_at,updated_at)
+        VALUES
+            (#{leaseUuid},#{jobId},#{serverId},#{accountId},#{gpuUuid},#{status},#{idempotencyKey},
+             #{acquiredAt},#{expiresAt},#{renewedAt},#{releasedAt},#{attempt},#{createdAt},#{updatedAt})
+    </insert>
+
+    <select id="findByJob" resultMap="LeaseResult">
+        SELECT lease_id,lease_uuid,job_id,server_id,account_id,gpu_uuid,status,idempotency_key,
+               acquired_at,expires_at,renewed_at,released_at,attempt,created_at,updated_at
+        FROM train_server_gpu_lease WHERE job_id=#{jobId} ORDER BY lease_id
+    </select>
+
+    <select id="findActiveByServerGpu" resultMap="LeaseResult">
+        SELECT lease_id,lease_uuid,job_id,server_id,account_id,gpu_uuid,status,idempotency_key,
+               acquired_at,expires_at,renewed_at,released_at,attempt,created_at,updated_at
+        FROM train_server_gpu_lease WHERE server_id=#{serverId} AND gpu_uuid=#{gpuUuid} AND status IN ('ACTIVE','QUARANTINED')
+        LIMIT 1
+    </select>
+
+    <update id="release">
+        UPDATE train_server_gpu_lease SET status='RELEASED',released_at=#{releasedAt},updated_at=#{releasedAt}
+        WHERE lease_id=#{leaseId} AND status IN ('ACTIVE','QUARANTINED')
+    </update>
+</mapper>
