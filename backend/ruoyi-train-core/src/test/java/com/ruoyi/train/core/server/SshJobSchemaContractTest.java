@@ -10,6 +10,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
+import org.mybatis.spring.annotation.MapperScan;
+import com.ruoyi.framework.config.ApplicationConfig;
 import com.ruoyi.train.core.server.gpu.SshGpuLeaseMapper;
 import com.ruoyi.train.core.server.gpu.SshGpuLeaseRecord;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,15 @@ import org.junit.jupiter.api.Test;
 class SshJobSchemaContractTest
 {
     private static final Path MIGRATION = Path.of("../sql/gputrain_phase9_ssh_jobs.sql");
+
+    @Test
+    void springMapperScanIncludesSshGpuLeaseMapperPackage()
+    {
+        MapperScan scan = ApplicationConfig.class.getAnnotation(MapperScan.class);
+        assertNotNull(scan);
+        assertTrue(List.of(scan.value()).contains(SshGpuLeaseMapper.class.getPackageName()),
+                "SshGpuLeaseMapper package must be included in Spring's mapper scan");
+    }
 
     @Test
     void migrationIsAdditiveAndKeepsRunnerHistoryReadable() throws Exception
