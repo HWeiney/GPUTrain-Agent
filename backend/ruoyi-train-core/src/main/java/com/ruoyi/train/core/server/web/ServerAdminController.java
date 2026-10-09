@@ -47,6 +47,12 @@ public class ServerAdminController {
         return AjaxResult.success(service.probe(id,request.accountId(),SecurityUtils.getUserId()));
     }
 
+    @PreAuthorize("isAuthenticated() and (@ss.hasPermi('train:server:view') or @ss.hasPermi('train:server:manage'))")
+    @PostMapping("/{id}/connection-test")
+    public AjaxResult testConnection(@PathVariable Long id,@RequestBody ConnectionTest request) {
+        return AjaxResult.success(service.testConnection(id,request,SecurityUtils.getUserId()));
+    }
+
     @PreAuthorize("isAuthenticated() and @ss.hasPermi('train:server:view')")
     @GetMapping("/{id}/devices")
     public AjaxResult devices(@PathVariable Long id,@RequestParam Long accountId) {

@@ -68,11 +68,23 @@ class ServerAdminControllerTest {
   assertFalse(rotation.getContentAsString().contains("NEVER-LOG-PRIVATE-KEY"));
   assertEquals(403,mvc.perform(put("/train/servers/1").contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn().getResponse().getStatus());
  }
+ @Test void connectionTestIsViewScopedAndDoesNotReturnSubmittedSecret() throws Exception {
+  login("train:server:view");
+  String secret="TRANSIENT-PRIVATE-KEY";
+  var response=mvc.perform(post("/train/servers/1/connection-test").contentType(MediaType.APPLICATION_JSON)
+   .content("{\"accountId\":7,\"credential\":\""+secret+"\"}")).andReturn().getResponse();
+  assertEquals(200,response.getStatus(),response.getContentAsString());
+  assertTrue(response.getContentAsString().contains("true"));
+  assertFalse(response.getContentAsString().contains(secret));
+ }
  @Configuration @EnableMethodSecurity(proxyTargetClass=true) static class Config {
   @Bean(name="ss") PermissionService permission() { return new PermissionService(); }
   @Bean ServerAdminController controller() { return new ServerAdminController(new ServerInventoryService(null,null,null,null,null,null,null,null) {
    @Override public ServerAccountView rotate(Long s,Long a,RotateCredentials request,Long user) {
     assertEquals(42L,user); assertTrue(request.rotate()); return new ServerAccountView(7L,1L,42L,"alice","PASSWORD",true,"/work");
+   }
+   @Override public ConnectionTestResult testConnection(Long s,ConnectionTest request,Long user) {
+    assertEquals(42L,user); assertEquals("TRANSIENT-PRIVATE-KEY",request.credential()); return new ConnectionTestResult(true,null);
    }
    @Override public List<ServerEntry> list(Long user) { assertEquals(42L,user); return List.of(); }
    @Override public com.ruoyi.train.core.server.domain.ServerProbeResult probe(Long s,Long a,Long user) { throw new SshGateway.SshException(SshGateway.ErrorCode.AUTH_FAILED); }

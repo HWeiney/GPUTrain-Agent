@@ -27,6 +27,11 @@ public class ServerInventoryService {
     public record RotateCredentials(boolean rotate, String credential, String passphrase) {
         @Override public String toString() { return "RotateCredentials[redacted]"; }
     }
+    public record ConnectionTest(Long accountId, Long ownerUserId, String linuxUsername,
+        String authType, String credential, String passphrase) {
+        @Override public String toString() { return "ConnectionTest[redacted]"; }
+    }
+    public record ConnectionTestResult(boolean success, String errorCode) { }
     public record ServerView(Long serverId, String name, String host, int port, String hostKeyFingerprint, boolean enabled, Instant lastProbeAt, Instant lastSuccessAt, String status, Map<String, Boolean> capabilities) {}
     public record ServerAccountView(Long accountId, Long serverId, Long ownerUserId, String linuxUsername, String authType, boolean hasCredential, String allowedRoot) {}
     public record ServerEntry(ServerView server, List<ServerAccountView> accounts) {}
@@ -74,6 +79,44 @@ public class ServerInventoryService {
     public ServerProbeResult probe(Long serverId, Long accountId, Long user) {
         requireOwned(serverId, accountId, user);
         return probes.probe(serverId, accountId);
+    }
+    public ConnectionTestResult testConnection(Long serverId, ConnectionTest request, Long user) {
+        requireUser(user);
+        if (request == null || request.credential() == null || request.credential().isEmpty()) throw invalid();
+        ServerRecord server = requireServer(serverId);
+        if (!server.enabled()) throw new SshGateway.SshException(SshGateway.ErrorCode.ACCOUNT_INVALID);
+        ServerAccountRecord existing = null;
+        Long ownerUserId;
+        String linuxUsername;
+        String authType;
+        if (request.accountId() != null) {
+            existing = requireOwned(serverId, request.accountId(), user);
+            ownerUserId = existing.ownerUserId();
+            linuxUsername = existing.linuxUsername();
+            authType = existing.authType();
+        } else {
+            requireAdmin(user);
+            ownerUserId = request.ownerUserId();
+            linuxUsername = request.linuxUsername();
+            authType = request.authType();
+            if (ownerUserId == null || !inventory.userExists(ownerUserId)) throw invalid();
+        }
+        if (linuxUsername == null || !linuxUsername.matches("[a-zA-Z_][a-zA-Z0-9_.-]{0,63}[$]?")
+            || !Set.of("PASSWORD", "PRIVATE_KEY").contains(Objects.toString(authType, ""))
+            || ("PASSWORD".equals(authType) && request.passphrase() != null && !request.passphrase().isEmpty())) throw invalid();
+        String credential = cipher.encrypt(request.credential());
+        String passphrase = request.passphrase() == null || request.passphrase().isEmpty() ? null : cipher.encrypt(request.passphrase());
+        requireStorableSecrets(credential, passphrase);
+        Instant now = clock.instant();
+        ServerAccountRecord ephemeral = new ServerAccountRecord(request.accountId(), serverId, ownerUserId,
+            linuxUsername, authType, credential, passphrase, true, "/", "{}", true, "UNKNOWN", null,
+            null, null, now, now);
+        try {
+            gateway.withVerifiedSession(server, ephemeral, session -> Boolean.TRUE);
+            return new ConnectionTestResult(true, null);
+        } catch (SshGateway.SshException failure) {
+            return new ConnectionTestResult(false, failure.code().name());
+        }
     }
     public List<ServerDeviceQueryService.DeviceView> devices(Long serverId, Long accountId, Long user) {
         requireOwned(serverId, accountId, user);

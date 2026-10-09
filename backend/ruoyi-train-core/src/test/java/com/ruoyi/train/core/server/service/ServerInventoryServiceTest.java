@@ -24,6 +24,8 @@ class ServerInventoryServiceTest
     Runnable previewHook = () -> {};
     int secretReads, credentialWrites, snapshotReads, probes;
     ServerAccountRecord written;
+    ServerAccountRecord tested;
+    int connectionTests;
     final ServerMapper servers = proxy(ServerMapper.class, (m, a) -> switch(m) {
         case "listForOwner" -> rows.stream().filter(s -> (boolean)a[1] || identities.stream().anyMatch(i -> i.serverId().equals(s.serverId()) && i.ownerUserId().equals(a[0]))).toList();
         case "findById" -> rows.stream().filter(s -> s.serverId().equals(a[0])).findFirst().orElse(null);
@@ -49,7 +51,13 @@ class ServerInventoryServiceTest
     final ServerSnapshotMapper snapshots = proxy(ServerSnapshotMapper.class, (m,a) -> { snapshotReads++; return null; });
     final SshGateway gateway = new SshGateway() {
         public HostKeyPreview preview(String host,int port,Duration timeout) { previewHost=host; previewHook.run(); return new HostKeyPreview("ssh-ed25519",previewFingerprint); }
-        public <T> T withVerifiedSession(ServerRecord s,ServerAccountRecord a,java.util.function.Function<SshSession,T> op) { throw new AssertionError(); }
+        public <T> T withVerifiedSession(ServerRecord s,ServerAccountRecord a,java.util.function.Function<SshSession,T> op) {
+            tested=a; connectionTests++;
+            try (SshSession session = new SshSession() {
+                public CommandResult exec(List<String> command,Duration timeout,int limit) { throw new AssertionError(); }
+                public void close() { }
+            }) { return op.apply(session); }
+        }
     };
     ServerInventoryService service() { return new ServerInventoryService(servers, accounts, inventory, snapshots, gateway, cipher, null, null, Clock.fixed(NOW, ZoneOffset.UTC)); }
     ServerRecord server() { ServerRecord s=new ServerRecord(1L,"GPU","gpu.local",22,FP,true,NOW,NOW); rows.add(s); return s; }
@@ -99,6 +107,16 @@ class ServerInventoryServiceTest
         service().assign(1L,new CreateAccount(42L,"alice","PASSWORD","secret",null,"/work"),1L);
         assertEquals("secret",cipher.decrypt(written.credentialCiphertext()));
         assertFalse(written.toString().contains("secret"));
+    }
+    @Test void connectionTestAuthenticatesEphemeralCredentialsWithoutPersistingThem() {
+        server();
+        var result=service().testConnection(1L,
+            new ConnectionTest(null,42L,"alice","PASSWORD","transient-secret",null),1L);
+        assertTrue(result.success()); assertNull(result.errorCode());
+        assertEquals(1,connectionTests); assertEquals("transient-secret",cipher.decrypt(tested.credentialCiphertext()));
+        assertNull(written); assertEquals(0,credentialWrites); assertEquals(0,secretReads);
+        assertThrows(RuntimeException.class,()->service().testConnection(1L,
+            new ConnectionTest(null,42L,"alice","PASSWORD","transient-secret",null),42L));
     }
     @Test void disabledAndStaleServersAreNotOnline() {
         server(); account(42);
