@@ -26,6 +26,7 @@ class ServerProbeServiceTest
         void advance(long seconds) { now = now.plusSeconds(seconds); }
     }
     static class Store {
+        Map<Long, ServerRecord> servers = new ConcurrentHashMap<>(Map.of(1L, server(1), 2L, server(2)));
         Map<Long, ServerAccountRecord> accounts = new ConcurrentHashMap<>(Map.of(11L, account(1,11), 22L, account(2,22)));
         Map<List<Object>, ServerSnapshotRecord> snapshots = new ConcurrentHashMap<>();
         Map<List<Object>, ServerGpuDeviceRecord> devices = new ConcurrentHashMap<>();
@@ -34,7 +35,7 @@ class ServerProbeServiceTest
         @SuppressWarnings("unchecked") <T> T mapper(Class<T> type) {
             return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (proxy, method, args) -> {
                 String name = method.getName();
-                if (type == ServerMapper.class && name.equals("findById")) return server((Long) args[0]);
+                if (type == ServerMapper.class && name.equals("findById")) return servers.get(args[0]);
                 if (type == ServerAccountMapper.class) {
                     if (name.equals("findById") || name.equals("findCredentialsByAuthorizedAccountId")) return accounts.get(args[0]);
                     if (name.equals("listEnabledForProbe")) return accounts.values().stream().filter(a -> a.accountId() > (Long) args[0]).sorted(Comparator.comparing(ServerAccountRecord::accountId)).limit((Integer) args[1]).toList();
@@ -77,7 +78,7 @@ class ServerProbeServiceTest
         return new ServerProbeService(store.mapper(ServerMapper.class), store.mapper(ServerAccountMapper.class), store.mapper(ServerSnapshotMapper.class), store.mapper(ServerGpuDeviceMapper.class), store.mapper(ServerGpuSnapshotMapper.class), new ServerProbe(gateway), transactions(), clock);
     }
     private ServerDeviceQueryService query() {
-        return new ServerDeviceQueryService(store.mapper(ServerAccountMapper.class), store.mapper(ServerSnapshotMapper.class), store.mapper(ServerGpuDeviceMapper.class), store.mapper(ServerGpuSnapshotMapper.class), clock);
+        return new ServerDeviceQueryService(store.mapper(ServerMapper.class), store.mapper(ServerAccountMapper.class), store.mapper(ServerSnapshotMapper.class), store.mapper(ServerGpuDeviceMapper.class), store.mapper(ServerGpuSnapshotMapper.class), clock);
     }
 
     @Test void onlineAndOfflineServersWithSameUuidRetainIsolatedLastSuccessfulSnapshots() {
@@ -159,6 +160,26 @@ class ServerProbeServiceTest
             assertEquals(NOW, store.accounts.get(11L).lastSuccessAt());
             assertEquals(clock.instant(), store.accounts.get(11L).lastProbeAt());
             assertEquals(NOW, store.snapshots.get(List.of(1L,11L)).sampledAt());
+        }
+    }
+
+    @Test void disabledServerMakesFreshIdleGpuUnobservableWithoutReplacingFacts() {
+        try (var service = service()) {
+            gateway.replies.replaceAll((command, reply) -> command.get(1).startsWith("--query-compute-apps") ? new SshGateway.CommandResult(0,"","") : reply);
+            service.probe(1L,11L);
+            var before = query().list(1L,11L,7L).get(0);
+            assertEquals("OBSERVED", before.identityState());
+            assertTrue(before.schedulable());
+            ServerRecord server = store.servers.get(1L);
+            store.servers.put(1L, new ServerRecord(server.serverId(),server.name(),server.host(),server.port(),server.hostKeySha256(),false,server.createdAt(),clock.instant()));
+            var after = query().list(1L,11L,7L).get(0);
+            assertEquals("UNOBSERVABLE", after.identityState());
+            assertFalse(after.schedulable());
+            assertEquals(before.sampledAt(), after.sampledAt());
+            assertEquals(before.totalMemoryMiB(), after.totalMemoryMiB());
+            assertEquals(before.usedMemoryMiB(), after.usedMemoryMiB());
+            assertEquals(before.utilizationPercent(), after.utilizationPercent());
+            assertEquals(before.migMode(), after.migMode());
         }
     }
 

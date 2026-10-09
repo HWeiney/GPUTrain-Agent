@@ -18,6 +18,7 @@ public class ServerDeviceQueryService
     public record DeviceView(Long serverId, Long accountId, String gpuUuid, String name,
         String identityState, boolean schedulable, Instant sampledAt, long totalMemoryMiB,
         long usedMemoryMiB, int utilizationPercent, String migMode, int externalProcessCount) { }
+    private final ServerMapper servers;
     private final ServerAccountMapper accounts;
     private final ServerSnapshotMapper snapshots;
     private final ServerGpuDeviceMapper devices;
@@ -26,19 +27,20 @@ public class ServerDeviceQueryService
     private final ObjectMapper json = new ObjectMapper();
 
     @Autowired
-    public ServerDeviceQueryService(ServerAccountMapper accounts, ServerSnapshotMapper snapshots,
+    public ServerDeviceQueryService(ServerMapper servers, ServerAccountMapper accounts, ServerSnapshotMapper snapshots,
         ServerGpuDeviceMapper devices, ServerGpuSnapshotMapper gpuSnapshots)
-    { this(accounts, snapshots, devices, gpuSnapshots, Clock.systemUTC()); }
+    { this(servers, accounts, snapshots, devices, gpuSnapshots, Clock.systemUTC()); }
 
-    public ServerDeviceQueryService(ServerAccountMapper accounts, ServerSnapshotMapper snapshots,
+    public ServerDeviceQueryService(ServerMapper servers, ServerAccountMapper accounts, ServerSnapshotMapper snapshots,
         ServerGpuDeviceMapper devices, ServerGpuSnapshotMapper gpuSnapshots, Clock clock)
-    { this.accounts = accounts; this.snapshots = snapshots; this.devices = devices; this.gpuSnapshots = gpuSnapshots; this.clock = clock; }
+    { this.servers = servers; this.accounts = accounts; this.snapshots = snapshots; this.devices = devices; this.gpuSnapshots = gpuSnapshots; this.clock = clock; }
 
     public List<DeviceView> list(Long serverId, Long accountId, Long ownerUserId)
     {
         ServerAccountRecord account = accounts.findById(accountId);
         if (ownerUserId == null || account == null || !ownerUserId.equals(account.ownerUserId())
             || !Objects.equals(serverId, account.serverId())) throw new ServiceException("Server account unavailable");
+        ServerRecord server = servers.findById(serverId);
         ServerSnapshotRecord host = snapshots.findLatest(serverId, accountId);
         List<DeviceView> result = new ArrayList<>();
         for (ServerGpuDeviceRecord device : devices.listByServer(serverId))
@@ -46,7 +48,7 @@ public class ServerDeviceQueryService
             ServerGpuSnapshotRecord gpu = gpuSnapshots.findLatest(serverId, accountId, device.gpuUuid());
             if (gpu == null) continue; // Another account's observation is not this user's evidence.
             int external = externalCount(gpu.computeProcessesJson());
-            boolean current = account.enabled() && host != null && gpu.sampledAt().equals(host.sampledAt())
+            boolean current = server != null && server.enabled() && account.enabled() && host != null && gpu.sampledAt().equals(host.sampledAt())
                 && Objects.equals(account.lastProbeAt(), account.lastSuccessAt())
                 && Objects.equals(account.lastSuccessAt(), host.sampledAt())
                 && Set.of("ONLINE", "DEGRADED").contains(account.status())
