@@ -20,7 +20,7 @@ class SshJobDispatcherWiringTest
     void springManagedComponentsWithMultipleConstructorsDeclareInjectionConstructor()
     {
         List<Class<?>> components = List.of(SshJobDispatcher.class, SshJobReconciler.class,
-                SshLogCollector.class, MinaSshGateway.class, ServerSecretCipher.class,
+                SshLogCollector.class, SshRemoteJobClient.class, MinaSshGateway.class, ServerSecretCipher.class,
                 JobService.class, ServerDeviceQueryService.class, ServerInventoryService.class,
                 ServerProbeService.class);
         for (Class<?> component : components)

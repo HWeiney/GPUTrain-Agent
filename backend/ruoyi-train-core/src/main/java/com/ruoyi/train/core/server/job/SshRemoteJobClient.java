@@ -11,6 +11,7 @@ import com.ruoyi.train.core.server.ssh.SshGateway.CommandResult;
 import com.ruoyi.train.core.server.ssh.SshGateway.ErrorCode;
 import com.ruoyi.train.core.server.ssh.SshGateway.SshException;
 import com.ruoyi.train.core.server.ssh.SshGateway.SshSession;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -22,6 +23,7 @@ public final class SshRemoteJobClient
     private final SshGateway gateway;
     private final SystemdCommandBuilder commands;
 
+    @Autowired
     public SshRemoteJobClient(SshGateway gateway)
     {
         this(gateway, new SystemdCommandBuilder());
