@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +24,9 @@ import com.ruoyi.train.core.runner.mapper.RunnerCommandMapper;
 import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.runner.protocol.ProcessSpec;
 import com.ruoyi.train.runner.protocol.RunnerProtocolException;
+import com.ruoyi.train.core.server.job.SshJobSubmissionValidator;
+import com.ruoyi.train.core.server.service.ServerDeviceQueryService;
+import com.ruoyi.train.core.server.service.ServerInventoryService;
 
 /**
  * Orchestrates the training job lifecycle: submission, atomic GPU allocation, START/STOP
@@ -38,16 +42,30 @@ public class JobService
     private final RunnerCommandService commandService;
     private final RunnerCommandMapper commandMapper;
     private final ObjectMapper json;
+    private final ServerInventoryService serverInventory;
+    private final ServerDeviceQueryService serverDevices;
+    private final SshJobSubmissionValidator sshSubmissionValidator;
 
+    @Autowired
     public JobService(JobMapper jobMapper, GpuLeaseService leaseService,
             RunnerCommandService commandService, RunnerCommandMapper commandMapper,
-            ObjectMapper json)
+            ObjectMapper json, ServerInventoryService serverInventory,
+            ServerDeviceQueryService serverDevices)
     {
         this.jobMapper = Objects.requireNonNull(jobMapper);
         this.leaseService = Objects.requireNonNull(leaseService);
         this.commandService = Objects.requireNonNull(commandService);
         this.commandMapper = Objects.requireNonNull(commandMapper);
         this.json = Objects.requireNonNull(json);
+        this.serverInventory = serverInventory;
+        this.serverDevices = serverDevices;
+        this.sshSubmissionValidator = new SshJobSubmissionValidator();
+    }
+
+    public JobService(JobMapper jobMapper, GpuLeaseService leaseService,
+            RunnerCommandService commandService, RunnerCommandMapper commandMapper, ObjectMapper json)
+    {
+        this(jobMapper, leaseService, commandService, commandMapper, json, null, null);
     }
 
     @Transactional
@@ -63,7 +81,7 @@ public class JobService
         if (existing != null)
             return existing;
         if (submission.serverId() != null)
-            throw new IllegalStateException("SSH job scheduling is not enabled yet");
+            return queueSsh(submission, now);
 
         JobRecord job = new JobRecord(null, UUID.randomUUID().toString(),
                 submission.ownerUserId(), null, submission.gpuCount(),
@@ -96,6 +114,23 @@ public class JobService
         if (jobMapper.attachStartCommand(jobId, runnerId, start.commandId(), writeJson(spec), now) != 1)
             throw new IllegalStateException("Unable to attach start command");
         return jobMapper.findById(jobId);
+    }
+
+    private JobRecord queueSsh(JobSubmission submission, Instant now)
+    {
+        if (serverInventory == null || serverDevices == null)
+            throw new IllegalStateException("SSH job scheduling is not enabled yet");
+        var detail = serverInventory.detail(submission.serverId(), submission.accountId(), submission.ownerUserId());
+        var observed = serverDevices.list(submission.serverId(), submission.accountId(), submission.ownerUserId());
+        String uuid = UUID.randomUUID().toString();
+        var prepared = sshSubmissionValidator.validate(submission, detail, observed, now, UUID.fromString(uuid));
+        JobRecord queued = new JobRecord(null, uuid, submission.ownerUserId(), null, 3,
+                submission.minMemoryMiB(), writeJson(prepared.gpuUuids()), writeJson(submission.deniedUuids()),
+                writeJson(submission.toProcessSpec()), JobStatus.QUEUED.name(), submission.requestKey(),
+                null, null, now, now, "SSH", submission.serverId(), submission.accountId(),
+                prepared.unitName(), submission.workingDirectory());
+        if (jobMapper.insert(queued) != 1) throw new IllegalStateException("Unable to queue SSH job");
+        return jobMapper.findByRequestKey(submission.requestKey());
     }
 
     @Transactional

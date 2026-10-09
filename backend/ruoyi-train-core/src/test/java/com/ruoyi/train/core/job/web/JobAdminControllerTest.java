@@ -142,7 +142,7 @@ class JobAdminControllerTest
 
         assertEquals(8L, submission.serverId());
         assertEquals(12L, submission.accountId());
-        assertEquals("/data/hanw/hw_code/gputrain-test/", submission.workingDirectory());
+        assertEquals("/data/hanw/hw_code/gputrain-test", submission.workingDirectory());
     }
 
     @Test

@@ -66,7 +66,7 @@ public class JobAdminController
         if ((request.serverId() == null) != (request.accountId() == null))
             throw new IllegalArgumentException("Server and account are required together");
         return new JobSubmission(owner, 3, 0, allowedUuids, Set.of(), request.requestKey(),
-                "/data/hanw/hw_code/gputrain-test/", "/usr/bin/bash",
+                "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
                 List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
                         "/model/hanw/ms-swift-imp3-research/configs/ocr_evidence/docowl2_srfund.env"),
                 environment, 3600, 70000, true, request.serverId(), request.accountId());

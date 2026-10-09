@@ -30,12 +30,14 @@
         INSERT INTO train_job
             (job_uuid, owner_user_id, runner_id, gpu_count, min_memory_mib,
              allowed_gpu_uuids, denied_gpu_uuids, process_spec_json, status,
-             request_key, start_command_id, stop_command_id, created_at, updated_at)
+             request_key, start_command_id, stop_command_id, created_at, updated_at,
+             execution_mode, server_id, account_id, remote_unit_name, remote_working_directory)
         VALUES
             (#{jobUuid}, #{ownerUserId}, #{runnerId}, #{gpuCount}, #{minMemoryMiB},
              CAST(#{allowedGpuUuidsJson} AS JSON), CAST(#{deniedGpuUuidsJson} AS JSON),
              CAST(#{processSpecJson} AS JSON), #{status}, #{requestKey},
-             #{startCommandId}, #{stopCommandId}, #{createdAt}, #{updatedAt})
+             #{startCommandId}, #{stopCommandId}, #{createdAt}, #{updatedAt},
+             #{executionMode}, #{serverId}, #{accountId}, #{remoteUnitName}, #{remoteWorkingDirectory})
     </insert>
 
     <select id="findById" resultMap="JobResult">

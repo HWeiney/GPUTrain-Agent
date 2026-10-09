@@ -69,6 +69,13 @@ class SshJobSchemaContractTest
         assertTrue(configuration.hasStatement("com.ruoyi.train.core.job.mapper.JobMapper.findById"));
         assertTrue(configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.findById")
             .getBoundSql(java.util.Map.of("jobId", 1L)).getSql().contains("SELECT"));
+        String insertSql = configuration.getMappedStatement("com.ruoyi.train.core.job.mapper.JobMapper.insert")
+            .getBoundSql(new com.ruoyi.train.core.job.domain.JobRecord(null, "uuid", 1L, null, 3, 0,
+                    "[]", "[]", "{}", "QUEUED", "request", null, null,
+                    java.time.Instant.now(), java.time.Instant.now(), "SSH", 2L, 3L,
+                    "gputrain-00000000-0000-0000-0000-000000000000.service", "/data/train"))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(insertSql.contains("execution_mode, server_id, account_id, remote_unit_name, remote_working_directory"));
 
         String leaseResource = "mapper/train/SshGpuLeaseMapper.xml";
         try (InputStream input = getClass().getClassLoader().getResourceAsStream(leaseResource))
