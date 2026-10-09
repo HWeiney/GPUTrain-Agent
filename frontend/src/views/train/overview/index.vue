@@ -4,7 +4,7 @@
       <div>
         <p class="overview-kicker">SHARED GPU CONTROL PLANE</p>
         <h1>训练工作台</h1>
-        <p class="overview-summary">查看控制面、实验任务与用户级 Runner 的当前状态。</p>
+        <p class="overview-summary">查看控制面、训练任务与已连接服务器的当前状态。</p>
       </div>
       <button class="refresh-button" type="button" :disabled="loading" @click="loadOverview">
         <RefreshRight aria-hidden="true" />
@@ -58,7 +58,8 @@ const lastUpdated = ref('等待首次同步')
 const overview = ref<TrainOverview>({
   status: 'UNKNOWN',
   activeExperiments: 0,
-  onlineRunners: 0
+  onlineRunners: 0,
+  onlineServers: 0
 })
 
 const statusText = computed(() => failed.value ? '连接失败' : overview.value.status === 'READY' ? '数据已同步' : '状态未知')
@@ -78,10 +79,10 @@ const cards = computed(() => [
     icon: markRaw(VideoPlay)
   },
   {
-    key: 'runners',
-    label: '在线 Runner',
-    value: overview.value.onlineRunners,
-    note: '已连接控制面的用户级执行器',
+    key: 'servers',
+    label: '在线服务器',
+    value: overview.value.onlineServers ?? overview.value.onlineRunners,
+    note: '最近成功采样且连接状态正常的服务器',
     icon: markRaw(Connection)
   }
 ])
@@ -102,7 +103,7 @@ async function loadOverview() {
     }).format(new Date())
   } catch (error) {
     failed.value = true
-    overview.value = { status: 'UNKNOWN', activeExperiments: 0, onlineRunners: 0 }
+    overview.value = { status: 'UNKNOWN', activeExperiments: 0, onlineRunners: 0, onlineServers: 0 }
     proxy?.$modal.msgError(error instanceof Error ? error.message : '训练总览加载失败')
   } finally {
     loading.value = false

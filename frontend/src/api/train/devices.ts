@@ -26,3 +26,11 @@ export function listGpuDevices(): Promise<AjaxResult<GpuDevice[]>> {
     method: 'get'
   })
 }
+
+export function listServerGpuDevices(serverId: number, accountId: number): Promise<AjaxResult<import('./servers').ServerGpuDevice[]>> {
+  return request({
+    url: '/train/gpu/server-devices',
+    method: 'get',
+    params: { serverId, accountId }
+  })
+}

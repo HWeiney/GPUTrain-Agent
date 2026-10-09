@@ -6,7 +6,13 @@
         <h1>GPU 设备</h1>
         <p class="page-summary">Runner 上报的 GPU 快照、身份状态与外部占用。数据仅为观测事实，不代表可调度。</p>
       </div>
-      <el-button :loading="loading" @click="load">刷新</el-button>
+      <div class="header-actions">
+        <el-select v-model="source" aria-label="GPU 数据来源" class="source-select" @change="load">
+          <el-option label="Runner 设备" value="runner" />
+          <el-option v-for="item in serverOptions" :key="item.key" :label="item.label" :value="item.key" />
+        </el-select>
+        <el-button :loading="loading" @click="load">刷新</el-button>
+      </div>
     </header>
 
     <el-table v-loading="loading" :data="devices" border class="device-table" empty-text="暂无已上报设备">
@@ -40,18 +46,28 @@
 </template>
 
 <script setup lang="ts">
-import { listGpuDevices, type GpuDevice } from '@/api/train/devices'
+import { listGpuDevices, listServerGpuDevices, type GpuDevice } from '@/api/train/devices'
+import { listServers, type ServerEntry } from '@/api/train/servers'
+import { isSnapshotStale } from '@/views/train/servers/serverStatus'
+import useUserStore from '@/store/modules/user'
 
 const { proxy } = getCurrentInstance()!
+const userStore = useUserStore()
 const loading = ref(false)
 const failed = ref(false)
+const now = ref(Date.now())
 const devices = ref<GpuDevice[]>([])
-
-const FRESHNESS_MS = 30_000
+const source = ref('runner')
+const displayedSource = ref('runner')
+const serverEntries = ref<ServerEntry[]>([])
+const serverOptions = computed(() => (serverEntries.value ?? []).flatMap((entry: ServerEntry) => entry.accounts.map((account) => ({
+  key: `${entry.server.serverId}:${account.accountId}`,
+  label: `${entry.server.name} · ${account.linuxUsername}`
+}))))
 
 function isStale(row: GpuDevice): boolean {
   if (!row.sampledAt) return true
-  return Date.now() - new Date(row.sampledAt).getTime() > FRESHNESS_MS
+  return isSnapshotStale(row.sampledAt, now.value)
 }
 
 function statusText(row: GpuDevice): string {
@@ -74,21 +90,67 @@ function maskUuid(uuid: string): string {
   return uuid.length > 14 ? uuid.slice(0, 10) + '…' + uuid.slice(-4) : uuid
 }
 
+let loadGeneration = 0
 async function load() {
+  const generation = ++loadGeneration
+  const requestedSource = source.value
+  if (requestedSource !== displayedSource.value) {
+    devices.value = []
+    displayedSource.value = requestedSource
+  }
   loading.value = true
   failed.value = false
   try {
-    const response = await listGpuDevices()
-    devices.value = response.data ?? []
+    if (userStore.permissions.includes('train:server:view') || userStore.roles.includes('admin')) {
+      try {
+        const response = await listServers()
+        if (generation !== loadGeneration || requestedSource !== source.value) return
+        serverEntries.value = response.data ?? []
+      } catch { if (generation === loadGeneration && requestedSource === source.value) serverEntries.value = [] }
+    } else serverEntries.value = []
+    if (generation !== loadGeneration || requestedSource !== source.value) return
+    if (source.value !== 'runner' && !serverOptions.value.some((option: { key: string; label: string }) => option.key === source.value)) source.value = 'runner'
+    const effectiveSource = source.value
+    if (effectiveSource !== displayedSource.value) {
+      devices.value = []
+      displayedSource.value = effectiveSource
+    }
+    if (effectiveSource === 'runner') {
+      const response = await listGpuDevices()
+      if (generation !== loadGeneration || effectiveSource !== source.value) return
+      devices.value = response.data ?? []
+    } else {
+      const [serverIdText, accountIdText] = effectiveSource.split(':')
+      const response = await listServerGpuDevices(Number(serverIdText), Number(accountIdText))
+      if (generation !== loadGeneration || effectiveSource !== source.value) return
+      devices.value = (response.data ?? []).map(device => ({
+        gpuUuid: device.gpuUuid,
+        name: device.name,
+        hostSignature: serverEntries.value?.find((entry: ServerEntry) => entry.server.serverId === device.serverId)?.server.host ?? String(device.serverId),
+        identityState: device.identityState === 'OBSERVED' ? 'CONFIRMED' : device.identityState,
+        schedulable: device.schedulable,
+        sampledAt: device.sampledAt,
+        totalMemoryMiB: device.totalMemoryMiB,
+        usedMemoryMiB: device.usedMemoryMiB,
+        utilizationPercent: device.utilizationPercent,
+        migMode: device.migMode,
+        hasActiveLease: false,
+        externalProcessCount: device.externalProcessCount
+      }))
+    }
   } catch (error) {
-    failed.value = true
-    proxy?.$modal.msgError('设备列表加载失败')
+    if (generation === loadGeneration && requestedSource === source.value) {
+      failed.value = true
+      proxy?.$modal.msgError('设备列表加载失败')
+    }
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
-onMounted(load)
+let freshnessTimer: number | undefined
+onMounted(() => { load(); freshnessTimer = window.setInterval(() => { now.value = Date.now() }, 5_000) })
+onBeforeUnmount(() => { loadGeneration++; if (freshnessTimer !== undefined) window.clearInterval(freshnessTimer) })
 </script>
 
 <style scoped lang="scss">
@@ -101,6 +163,14 @@ onMounted(load)
   h1 {
     margin: 6px 0;
   }
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.source-select {
+  min-width: 220px;
 }
 .page-kicker {
   margin: 0;
@@ -128,5 +198,12 @@ onMounted(load)
 .load-error {
   margin-top: 14px;
   color: #8f3f3f;
+}
+@media (max-width: 640px) {
+  .page-header, .header-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .source-select { width: 100%; }
 }
 </style>
