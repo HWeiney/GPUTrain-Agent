@@ -23,6 +23,9 @@ public interface SshGateway
     interface SshSession extends AutoCloseable
     {
         CommandResult exec(List<String> fixedCommand, Duration timeout, int maxBytes);
+        default void uploadPrivateFile(String allowedRoot, String privateDirectory,
+                String fileName, byte[] content, int maxBytes)
+        { throw new SshException(ErrorCode.COMMAND_NOT_ALLOWED); }
         @Override void close();
     }
 

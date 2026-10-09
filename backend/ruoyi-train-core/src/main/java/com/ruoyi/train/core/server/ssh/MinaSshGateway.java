@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.EnumSet;
@@ -31,6 +32,10 @@ import org.apache.sshd.common.config.keys.FilePasswordProvider;
 import org.apache.sshd.common.keyprovider.KeyIdentityProvider;
 import org.apache.sshd.common.util.security.SecurityUtils;
 import org.apache.sshd.core.CoreModuleProperties;
+import org.apache.sshd.sftp.client.SftpClient;
+import org.apache.sshd.sftp.client.SftpClientFactory;
+import org.apache.sshd.sftp.common.SftpConstants;
+import org.apache.sshd.sftp.common.SftpException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import com.ruoyi.train.core.server.domain.ServerRecord;
@@ -47,6 +52,7 @@ public final class MinaSshGateway implements SshGateway
         List.of("nvidia-smi", "--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"),
         List.of("systemctl", "--user", "is-system-running"),
         List.of("loginctl", "show-user", "--property=Linger"));
+    private static final String SYSTEMD_PROPERTIES = "LoadState,ActiveState,SubState,Result,ExecMainPID,ExecMainStatus,ControlGroup";
 
     // DNS lookup may block in native code; cap both caller wait and resolver workers.
     private static final ExecutorService RESOLVER = new ThreadPoolExecutor(0, MAX_SESSIONS,
@@ -251,12 +257,14 @@ public final class MinaSshGateway implements SshGateway
             List<String> command;
             try { command = List.copyOf(fixedCommand); }
             catch (NullPointerException ignored) { throw new SshException(COMMAND_NOT_ALLOWED); }
-            if (!COMMANDS.contains(command)) throw new SshException(COMMAND_NOT_ALLOWED);
+            if (!allowedCommand(command)) throw new SshException(COMMAND_NOT_ALLOWED);
             bounded(timeout, DEFAULT_COMMAND_TIMEOUT);
             if (maxBytes < 1 || maxBytes > MAX_OUTPUT_BYTES) throw new SshException(INVALID_LIMIT);
             long deadline = deadline(timeout);
             AtomicBoolean overflow = new AtomicBoolean();
-            try (ChannelExec channel = session.createExecChannel(String.join(" ", command)))
+            String commandLine = command.stream().map(MinaSshGateway::shellQuote)
+                    .collect(java.util.stream.Collectors.joining(" "));
+            try (ChannelExec channel = session.createExecChannel(commandLine))
             {
                 var out = new LimitedOutput(maxBytes, overflow, channel);
                 var err = new LimitedOutput(maxBytes, overflow, channel);
@@ -277,8 +285,112 @@ public final class MinaSshGateway implements SshGateway
             }
         }
 
+        @Override public synchronized void uploadPrivateFile(String allowedRoot, String privateDirectory,
+                String fileName, byte[] content, int maxBytes)
+        {
+            if (closed || !session.isAuthenticated() || content == null || content.length > maxBytes
+                    || maxBytes < 1 || maxBytes > 65536 || fileName == null
+                    || !fileName.matches("[A-Za-z0-9._-]{1,128}")) throw new SshException(INVALID_LIMIT);
+            Path root = absoluteNormalized(allowedRoot);
+            Path directory = absoluteNormalized(privateDirectory);
+            if (directory.equals(root) || !directory.startsWith(root)) throw new SshException(COMMAND_NOT_ALLOWED);
+            String remoteFile = directory.resolve(fileName).toString();
+            try (SftpClient sftp = SftpClientFactory.instance().createSftpClient(session))
+            {
+                String canonicalRoot = sftp.canonicalPath(root.toString());
+                if (!root.toString().equals(canonicalRoot)) throw new SshException(COMMAND_NOT_ALLOWED);
+                Path current = root;
+                for (Path segment : root.relativize(directory))
+                {
+                    current = current.resolve(segment);
+                    SftpClient.Attributes attributes = lstatOrNull(sftp, current.toString());
+                    if (attributes == null)
+                    {
+                        try { sftp.mkdir(current.toString()); }
+                        catch (SftpException race)
+                        {
+                            if (race.getStatus() != SftpConstants.SSH_FX_FILE_ALREADY_EXISTS) throw race;
+                        }
+                        attributes = sftp.lstat(current.toString());
+                    }
+                    if (!attributes.isDirectory() || attributes.isSymbolicLink()) throw new SshException(COMMAND_NOT_ALLOWED);
+                    sftp.setStat(current.toString(), new SftpClient.Attributes().perms(0700));
+                }
+                SftpClient.Attributes existing = lstatOrNull(sftp, remoteFile);
+                if (existing != null && (!existing.isRegularFile() || existing.isSymbolicLink()))
+                    throw new SshException(COMMAND_NOT_ALLOWED);
+                try (OutputStream output = sftp.write(remoteFile, SftpClient.OpenMode.Create,
+                        SftpClient.OpenMode.Write, SftpClient.OpenMode.Truncate))
+                {
+                    output.write(content);
+                }
+                sftp.setStat(remoteFile, new SftpClient.Attributes().perms(0600));
+            }
+            catch (SshException e) { throw e; }
+            catch (IOException e) { throw new SshException(COMMAND_FAILED); }
+        }
+
+        private static SftpClient.Attributes lstatOrNull(SftpClient client, String path) throws IOException
+        {
+            try { return client.lstat(path); }
+            catch (SftpException failure)
+            {
+                if (failure.getStatus() == SftpConstants.SSH_FX_NO_SUCH_FILE) return null;
+                throw failure;
+            }
+        }
+
         @Override public synchronized void close() { closed = true; session.close(true); }
     }
+
+    private static boolean allowedCommand(List<String> command)
+    {
+        if (COMMANDS.contains(command)) return true;
+        if (command.size() == 6 && command.get(0).equals("systemctl") && command.get(1).equals("--user")
+                && command.get(2).equals("show") && validUnit(command.get(3))
+                && command.get(4).equals("--no-pager") && command.get(5).equals("--property=" + SYSTEMD_PROPERTIES)) return true;
+        if (command.size() == 4 && command.get(0).equals("systemctl") && command.get(1).equals("--user")
+                && command.get(2).equals("stop") && validUnit(command.get(3))) return true;
+        if (command.size() == 10 && command.get(0).equals("systemd-run") && command.get(1).equals("--user")
+                && command.get(2).equals("--no-block") && command.get(3).startsWith("--unit=")
+                && validUnit(command.get(3).substring("--unit=".length()))
+                && command.get(4).equals("--property=KillMode=control-group")
+                && command.get(8).equals("/usr/bin/bash"))
+        {
+            String unit = command.get(3).substring("--unit=".length());
+            String uuid = unit.substring("gputrain-".length(), unit.length() - ".service".length());
+            String work = command.get(5).startsWith("--property=WorkingDirectory=")
+                    ? command.get(5).substring("--property=WorkingDirectory=".length()) : "";
+            return validJobDirectory(work, uuid)
+                    && command.get(6).equals("--property=StandardOutput=append:" + work + "/stdout.log")
+                    && command.get(7).equals("--property=StandardError=append:" + work + "/stderr.log")
+                    && command.get(9).equals(work + "/run.sh");
+        }
+        return false;
+    }
+
+    private static boolean validUnit(String value)
+    { return value != null && value.matches("gputrain-[0-9a-fA-F-]{36}\\.service"); }
+
+    private static boolean validJobDirectory(String value, String uuid)
+    {
+        if (value == null || !value.startsWith("/") || value.chars().anyMatch(ch -> ch < 32 || ch == 127)) return false;
+        Path path = Path.of(value);
+        return path.normalize().equals(path) && path.getFileName().toString().equals(uuid)
+                && path.getParent() != null && path.getParent().getFileName().toString().equals("jobs")
+                && ".gputrain".equals(path.getParent().getParent().getFileName().toString());
+    }
+
+    private static Path absoluteNormalized(String value)
+    {
+        if (value == null || value.isBlank()) throw new SshException(COMMAND_NOT_ALLOWED);
+        Path path = Path.of(value);
+        if (!path.isAbsolute() || !path.normalize().equals(path)) throw new SshException(COMMAND_NOT_ALLOWED);
+        return path;
+    }
+
+    private static String shellQuote(String value)
+    { return "'" + value.replace("'", "'\\''") + "'"; }
 
     private static final class LimitedOutput extends OutputStream
     {
