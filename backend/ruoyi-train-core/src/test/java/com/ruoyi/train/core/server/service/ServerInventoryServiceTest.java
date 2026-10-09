@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.Proxy;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.train.core.server.domain.*;
@@ -20,6 +21,7 @@ class ServerInventoryServiceTest
     final ServerSecretCipher cipher = new ServerSecretCipher(new byte[32]);
     String previewFingerprint = FP;
     String previewHost;
+    Runnable previewHook = () -> {};
     int secretReads, credentialWrites, snapshotReads, probes;
     ServerAccountRecord written;
     final ServerMapper servers = proxy(ServerMapper.class, (m, a) -> switch(m) {
@@ -41,12 +43,12 @@ class ServerInventoryServiceTest
         case "findByAddress" -> rows.stream().filter(s -> s.host().equals(a[0]) && s.port()==(int)a[1]).findFirst().orElse(null);
         case "findByFingerprint" -> rows.stream().filter(s -> s.hostKeySha256().equals(a[0])).toList();
         case "userExists" -> a[0].equals(42L);
-        case "updateMetadata" -> { var old=rows.get(0); rows.set(0,new ServerRecord(old.serverId(),(String)a[1],old.host(),old.port(),(String)a[2],(boolean)a[3],NOW,NOW)); yield 1; }
+        case "updateMetadata" -> { var old=rows.get(0); rows.set(0,new ServerRecord(old.serverId(),(String)a[1],old.host(),old.port(),(String)a[2],a[3] == null ? old.enabled() : (boolean)a[3],NOW,NOW)); yield 1; }
         default -> throw new AssertionError(m);
     });
     final ServerSnapshotMapper snapshots = proxy(ServerSnapshotMapper.class, (m,a) -> { snapshotReads++; return null; });
     final SshGateway gateway = new SshGateway() {
-        public HostKeyPreview preview(String host,int port,Duration timeout) { previewHost=host; return new HostKeyPreview("ssh-ed25519",previewFingerprint); }
+        public HostKeyPreview preview(String host,int port,Duration timeout) { previewHost=host; previewHook.run(); return new HostKeyPreview("ssh-ed25519",previewFingerprint); }
         public <T> T withVerifiedSession(ServerRecord s,ServerAccountRecord a,java.util.function.Function<SshSession,T> op) { throw new AssertionError(); }
     };
     ServerInventoryService service() { return new ServerInventoryService(servers, accounts, inventory, snapshots, gateway, cipher, null, null, Clock.fixed(NOW, ZoneOffset.UTC)); }
@@ -139,6 +141,39 @@ class ServerInventoryServiceTest
         assertThrows(SshGateway.SshException.class,()->service().assign(1L,new CreateAccount(42L,"alice","PRIVATE_KEY","key","x".repeat(2000),"/work"),1L));
         assertThrows(SshGateway.SshException.class,()->service().rotate(1L,7L,new RotateCredentials(true,"x".repeat(60000),null),42L));
         assertNull(written); assertEquals(0,credentialWrites);
+    }
+    @Test void metadataUpdatePreservesDisableCommittedWhileFingerprintPreviewIsInFlight() throws Exception {
+        server();
+        String changed = "SHA256:" + "B".repeat(43);
+        previewFingerprint = changed;
+        CountDownLatch previewStarted = new CountDownLatch(1);
+        CountDownLatch resumePreview = new CountDownLatch(1);
+        previewHook = () -> {
+            previewStarted.countDown();
+            try { assertTrue(resumePreview.await(5, TimeUnit.SECONDS)); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+        };
+        ServerInventoryService service = service();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<ServerView> update = executor.submit(() -> service.update(1L,
+                new UpdateServer("recovered", null, changed, true, false), 1L));
+            assertTrue(previewStarted.await(5, TimeUnit.SECONDS));
+            service.disable(1L, 1L);
+            assertFalse(rows.get(0).enabled(), "disable must complete before preview resumes");
+            resumePreview.countDown();
+            ServerView updated = update.get(5, TimeUnit.SECONDS);
+            assertFalse(updated.enabled(), "omitted enabled must preserve the concurrent disable");
+            assertFalse(rows.get(0).enabled());
+            assertEquals("recovered", updated.name());
+            assertEquals(changed, updated.hostKeyFingerprint());
+            assertEquals("gpu.local", updated.host());
+            assertEquals("gpu.local", previewHost);
+            assertEquals(22, updated.port());
+        } finally {
+            resumePreview.countDown();
+            executor.shutdownNow();
+        }
     }
     @SuppressWarnings("unchecked") static <T> T proxy(Class<T> type, Handler h) { return (T)Proxy.newProxyInstance(type.getClassLoader(),new Class[]{type},(p,m,a)->h.run(m.getName(),a)); }
     interface Handler { Object run(String method,Object[] args); }

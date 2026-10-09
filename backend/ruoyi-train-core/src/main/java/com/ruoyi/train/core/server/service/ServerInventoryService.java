@@ -133,7 +133,9 @@ public class ServerInventoryService {
                 throw new ServiceException("DUPLICATE_FINGERPRINT_CONFIRMATION_REQUIRED");
         }
         // As in disable(), no SSH jobs exist until the execution migration adds server_id to train_job.
-        inventory.updateMetadata(serverId, name, fingerprint, request.enabled()==null ? current.enabled() : request.enabled(), clock.instant());
+        // Omitted fields must stay omitted through the eventual SQL update: a concurrent disable can
+        // commit while host-key preview is in flight, and a stale pre-preview value must not undo it.
+        inventory.updateMetadata(serverId, name, fingerprint, request.enabled(), clock.instant());
         return view(requireServer(serverId), null);
     }
     public ServerAccountView rotate(Long serverId, Long accountId, RotateCredentials request, Long user) {

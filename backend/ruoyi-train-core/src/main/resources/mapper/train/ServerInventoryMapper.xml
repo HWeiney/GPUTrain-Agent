@@ -18,8 +18,9 @@
    <if test="!isAdmin">AND a.owner_user_id = #{ownerUserId}</if>
   )
  </select>
- <update id="updateMetadata">
-  UPDATE train_server SET name=#{name}, host_key_sha256=#{fingerprint}, enabled=#{enabled}, updated_at=#{updatedAt}
+    <update id="updateMetadata">
+        UPDATE train_server SET name=#{name}, host_key_sha256=#{fingerprint},
+            enabled=COALESCE(#{enabled}, enabled), updated_at=#{updatedAt}
   WHERE server_id=#{serverId}
  </update>
 </mapper>
