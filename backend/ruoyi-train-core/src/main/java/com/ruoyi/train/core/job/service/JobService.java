@@ -62,6 +62,8 @@ public class JobService
         JobRecord existing = jobMapper.findByRequestKey(submission.requestKey());
         if (existing != null)
             return existing;
+        if (submission.serverId() != null)
+            throw new IllegalStateException("SSH job scheduling is not enabled yet");
 
         JobRecord job = new JobRecord(null, UUID.randomUUID().toString(),
                 submission.ownerUserId(), null, submission.gpuCount(),

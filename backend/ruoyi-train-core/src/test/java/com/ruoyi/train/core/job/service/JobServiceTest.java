@@ -56,6 +56,17 @@ class JobServiceTest
     }
 
     @Test
+    void serverTargetCannotFallThroughToLegacyRunnerPath()
+    {
+        JobSubmission ssh = new JobSubmission(10L, 3, 0L, java.util.Set.of("GPU-a", "GPU-b", "GPU-c"),
+                java.util.Set.of(), "req-ssh", "/data/hanw/hw_code/gputrain-test/", "/usr/bin/bash",
+                List.of("run.sh"), Map.of(), 3600, 70000, true, 2L, 9L);
+        assertThrows(IllegalStateException.class, () -> service.submit(ssh, NOW));
+        assertEquals(0, leaseService.allocateCalls);
+        assertEquals(0, commandService.createCalls);
+    }
+
+    @Test
     void duplicateSubmissionReturnsSameJobWithoutSecondProcess()
     {
         JobRecord first = service.submit(submission("req-2", 1), NOW);

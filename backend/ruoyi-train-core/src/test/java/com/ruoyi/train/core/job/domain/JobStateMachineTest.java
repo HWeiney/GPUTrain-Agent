@@ -68,6 +68,17 @@ class JobStateMachineTest
     }
 
     @Test
+    void uncertainRemoteStatesAreNonTerminalAndMustReconcile()
+    {
+        assertFalse(JobStatus.UNKNOWN.isTerminal());
+        assertFalse(JobStatus.RECONCILING.isTerminal());
+        JobStateMachine.requireTransition(JobStatus.STARTING, JobStatus.UNKNOWN);
+        JobStateMachine.requireTransition(JobStatus.UNKNOWN, JobStatus.RECONCILING);
+        JobStateMachine.requireTransition(JobStatus.RECONCILING, JobStatus.RUNNING);
+        assertThrows(IllegalStateException.class, () -> JobStateMachine.requireTransition(JobStatus.UNKNOWN, JobStatus.SUCCEEDED));
+    }
+
+    @Test
     void runningCanStopThenStopped()
     {
         JobStateMachine.requireTransition(JobStatus.RUNNING, JobStatus.STOPPING);

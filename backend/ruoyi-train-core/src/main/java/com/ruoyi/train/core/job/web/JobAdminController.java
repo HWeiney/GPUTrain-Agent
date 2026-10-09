@@ -63,11 +63,13 @@ public class JobAdminController
                 "NPROC_PER_NODE", "3", "MAX_STEPS", Integer.toString(request.maxSteps()),
                 "RUN_MODE", "foreground", "AUTO_EVAL", "False", "TRAIN_EVAL_STRATEGY", "no",
                 "RUN_ID", "gputrain-" + request.requestKey());
+        if ((request.serverId() == null) != (request.accountId() == null))
+            throw new IllegalArgumentException("Server and account are required together");
         return new JobSubmission(owner, 3, 0, allowedUuids, Set.of(), request.requestKey(),
-                "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
+                "/data/hanw/hw_code/gputrain-test/", "/usr/bin/bash",
                 List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
                         "/model/hanw/ms-swift-imp3-research/configs/ocr_evidence/docowl2_srfund.env"),
-                environment, 3600, 70000, true);
+                environment, 3600, 70000, true, request.serverId(), request.accountId());
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:view')")
@@ -106,7 +108,10 @@ public class JobAdminController
         return AjaxResult.success(jobService.cancel(jobId, Instant.now()));
     }
 
-    public record CreateJobRequest(String profileId, int maxSteps, String requestKey, Set<String> allowedGpuUuids)
+    public record CreateJobRequest(String profileId, int maxSteps, String requestKey,
+            Long serverId, Long accountId, Set<String> allowedGpuUuids)
     {
+        public CreateJobRequest(String profileId, int maxSteps, String requestKey, Set<String> allowedGpuUuids)
+        { this(profileId, maxSteps, requestKey, null, null, allowedGpuUuids); }
     }
 }

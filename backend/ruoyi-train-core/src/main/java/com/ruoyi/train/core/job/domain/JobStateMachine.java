@@ -25,11 +25,15 @@ public final class JobStateMachine
                     JobStatus.QUARANTINED);
             case ALLOCATED -> EnumSet.of(JobStatus.STARTING, JobStatus.FAILED, JobStatus.QUARANTINED);
             case STARTING -> EnumSet.of(JobStatus.RUNNING, JobStatus.SUCCEEDED,
-                    JobStatus.FAILED, JobStatus.STOPPED, JobStatus.QUARANTINED);
+                    JobStatus.FAILED, JobStatus.STOPPED, JobStatus.RECONCILING,
+                    JobStatus.UNKNOWN, JobStatus.QUARANTINED);
             case RUNNING -> EnumSet.of(JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.STOPPING,
-                    JobStatus.QUARANTINED);
+                    JobStatus.RECONCILING, JobStatus.UNKNOWN, JobStatus.QUARANTINED);
             case STOPPING -> EnumSet.of(JobStatus.STOPPED, JobStatus.FAILED, JobStatus.RUNNING,
-                    JobStatus.QUARANTINED);
+                    JobStatus.RECONCILING, JobStatus.UNKNOWN, JobStatus.QUARANTINED);
+            case UNKNOWN -> EnumSet.of(JobStatus.RECONCILING, JobStatus.QUARANTINED);
+            case RECONCILING -> EnumSet.of(JobStatus.RUNNING, JobStatus.STOPPING, JobStatus.SUCCEEDED,
+                    JobStatus.FAILED, JobStatus.STOPPED, JobStatus.UNKNOWN, JobStatus.QUARANTINED);
             case QUARANTINED -> EnumSet.of(JobStatus.RUNNING, JobStatus.FAILED, JobStatus.STOPPED,
                     JobStatus.STOPPING, JobStatus.QUARANTINED);
             case SUCCEEDED, FAILED, STOPPED, CANCELED -> NO_TRANSITIONS;

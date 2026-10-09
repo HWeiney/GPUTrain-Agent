@@ -27,14 +27,30 @@ public record JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
         Set<String> allowedUuids, Set<String> deniedUuids, String requestKey,
         String workingDirectory, String executable, List<String> arguments,
         Map<String, String> environment, long timeoutSeconds,
-        long minFreeMemoryMiB, boolean allowExternalOccupancy)
+        long minFreeMemoryMiB, boolean allowExternalOccupancy,
+        Long serverId, Long accountId)
 {
+    public JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
+            Set<String> allowedUuids, Set<String> deniedUuids, String requestKey,
+            String workingDirectory, String executable, List<String> arguments,
+            Map<String, String> environment, long timeoutSeconds,
+            long minFreeMemoryMiB, boolean allowExternalOccupancy)
+    { this(ownerUserId, gpuCount, minMemoryMiB, allowedUuids, deniedUuids, requestKey,
+            workingDirectory, executable, arguments, environment, timeoutSeconds,
+            minFreeMemoryMiB, allowExternalOccupancy, null, null); }
+
     public JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
             Set<String> allowedUuids, Set<String> deniedUuids, String requestKey,
             String workingDirectory, String executable, List<String> arguments,
             Map<String, String> environment, long timeoutSeconds)
     { this(ownerUserId, gpuCount, minMemoryMiB, allowedUuids, deniedUuids, requestKey,
-            workingDirectory, executable, arguments, environment, timeoutSeconds, 0, false); }
+            workingDirectory, executable, arguments, environment, timeoutSeconds, 0, false, null, null); }
+
+    public JobSubmission
+    {
+        if ((serverId == null) != (accountId == null) || (serverId != null && (serverId < 1 || accountId < 1)))
+            throw new IllegalArgumentException("Server and account must be supplied together");
+    }
     /**
      * Builds the structured process specification for this job. The command idempotency
      * key is derived deterministically from the request key so retries never produce a

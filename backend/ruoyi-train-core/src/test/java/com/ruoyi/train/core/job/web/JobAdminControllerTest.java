@@ -132,6 +132,20 @@ class JobAdminControllerTest
     }
 
     @Test
+    void createSubmissionBindsTheSelectedServerAndAccount()
+    {
+        Set<String> selected = Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "GPU-cccccccc-cccc-cccc-cccc-cccccccccccc");
+        JobSubmission submission = JobAdminController.toSubmission(42L,
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "req-ssh", 8L, 12L, selected));
+
+        assertEquals(8L, submission.serverId());
+        assertEquals(12L, submission.accountId());
+        assertEquals("/data/hanw/hw_code/gputrain-test/", submission.workingDirectory());
+    }
+
+    @Test
     void createSubmissionRejectsAnIncompleteGpuAllowlist()
     {
         assertThrows(IllegalArgumentException.class, () -> JobAdminController.toSubmission(42L,
