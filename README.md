@@ -1,6 +1,6 @@
 # GPUTrain Agent
 
-面向一台由团队共享的多 GPU 服务器的训练实验管理与智能诊断平台。控制面基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript；训练任务计划由每个 Linux 账户下的原生 Runner 执行，以保留用户文件权限、Conda 环境和 CUDA 工具链。
+GPUTrain 是基于 RuoYi-Vue Spring Boot 3 和 RuoYi-Vue3 TypeScript 的训练实验管理与智能诊断项目。`dev` 开发分支已接入多服务器 SSH 训练路径：控制面连接用户的 Linux 账户，使用 `systemd --user` 启动固定 profile 任务；旧 Runner 模块和历史接口仍保留。当前架构、一次训练的数据链路及验收边界见 [系统设计](docs/architecture/current-system-design.md)，未完成项见 [设计评审](docs/architecture/design-review-2026-10-10.md)，分支关系见 [分支盘点](docs/architecture/branch-inventory-2026-10-10.md)。下文各阶段 Runner 说明记录其历史实现和兼容路径，不等同于新 SSH 路径的部署要求。
 
 阶段一到阶段七已有实现和实机验收证据。2026-10-07 在 Linux H20 目标机部署 MCP Streamable HTTP、验证双用户 owner 隔离/权限/审计，并通过 GPUTrain 托管 3 卡一步训练（job9：loss `3.98971343`、step runtime `26.9208s`、3 个日志块、132 项指标、12 个资源样本）；数据库备份、隔离恢复和临时权限清理均已完成。该结果是功能验收，不是长时间吞吐或模型质量评估。详见 `docs/verification/phase-7-deployment.md`。
 

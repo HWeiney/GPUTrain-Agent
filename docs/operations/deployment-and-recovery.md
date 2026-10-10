@@ -1,6 +1,8 @@
 # GPUTrain Deployment and Recovery Runbook
 
-This runbook covers the current modular Spring Boot control plane, MySQL/Redis Compose dependencies, and per-user Linux GPU Runner. It describes an operator-controlled rollout; it does not assume a maintenance window or stop training automatically.
+> **Current SSH branch (2026-10-10):** This runbook documents the historical per-user Runner deployment and its recovery path. The `dev` branch also supports SSH-managed, user-level `systemd` training on multiple servers. See [current system design](../architecture/current-system-design.md) and [design review](../architecture/design-review-2026-10-10.md) before deploying that path. On an existing MySQL data directory, Compose initialization SQL does not rerun: back up the database, check and apply required Phase 4, 8, and 9 migrations, then smoke-test logs, metrics, alerts, resources, task state, and GPU leases. Changing `.env` does not rotate an already-created MySQL user's password. Do not retire Runner or release an uncertain SSH lease until the associated remote process and historical jobs have been reconciled.
+
+This runbook covers the modular Spring Boot control plane, MySQL/Redis Compose dependencies, and the earlier per-user Linux GPU Runner. It describes an operator-controlled rollout; it does not assume a maintenance window or stop training automatically.
 
 ## 1. Prerequisites and secrets
 
