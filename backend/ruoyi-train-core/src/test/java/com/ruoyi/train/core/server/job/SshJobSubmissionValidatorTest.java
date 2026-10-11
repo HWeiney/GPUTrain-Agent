@@ -40,6 +40,15 @@ class SshJobSubmissionValidatorTest
                 .validate(submission(), detail(true), devices(false), NOW, UUID.randomUUID()));
     }
 
+    @Test void rejectsSelectedGpuWithoutRequestedFreeMemory()
+    {
+        var insufficient = new ArrayList<>(devices(true));
+        insufficient.set(0, new DeviceView(4L, 8L, GPUS.get(0), "GPU", "EXTERNAL_OCCUPIED", false,
+                NOW, 80000, 11000, 100, "DISABLED", 1));
+        assertThrows(IllegalArgumentException.class, () -> new SshJobSubmissionValidator()
+                .validate(submission(), detail(true), insufficient, NOW, UUID.randomUUID()));
+    }
+
     private static JobSubmission submission()
     {
         return new JobSubmission(7, 3, 0, Set.copyOf(GPUS), Set.of(), "req",

@@ -3,9 +3,9 @@ package com.ruoyi.train.core.server.domain;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import com.ruoyi.train.runner.protocol.gpu.GpuSnapshot;
+import com.ruoyi.train.core.server.domain.GpuSnapshot;
 
-/** Facts from one account's pinned SSH session, independent of Runner state. */
+/** Facts from one account's pinned SSH session. */
 public record ServerProbeResult(Long serverId, Long accountId, Instant sampledAt,
         double load1, long memoryTotalKiB, long memoryAvailableKiB,
         long diskTotalKiB, long diskAvailableKiB, List<GpuSnapshot> gpus,

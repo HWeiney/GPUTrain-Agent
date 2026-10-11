@@ -25,7 +25,6 @@ public final class ServerSecretCipher
     @Autowired
     public ServerSecretCipher(@Value("${gputrain.ssh.master-key:}") String base64Key)
     {
-        // Existing Runner deployments remain usable until SSH inventory is configured.
         if (base64Key == null || base64Key.isBlank()) { key = null; return; }
         byte[] decoded;
         try { decoded = Base64.getDecoder().decode(base64Key); }

@@ -196,8 +196,6 @@ public class ServerInventoryService {
     }
     public void disable(Long serverId, Long user) {
         requireAdmin(user); requireServer(serverId);
-        // Inventory phase: train_job has runner_id only; the set of jobs associated with a server is empty.
-        // SSH job migration must add its nonterminal server_id/account_id guard here before enabling execution.
         servers.setEnabled(serverId, false, clock.instant());
     }
     private ServerAccountRecord requireOwned(Long serverId, Long accountId, Long user) {

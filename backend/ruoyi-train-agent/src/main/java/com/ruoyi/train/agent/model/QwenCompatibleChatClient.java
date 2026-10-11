@@ -28,7 +28,7 @@ public class QwenCompatibleChatClient implements StructuredAgentModel
     @Autowired
     public QwenCompatibleChatClient(ObjectMapper mapper,
             @Value("${gputrain.agent.qwen.base-url:https://dashscope.aliyuncs.com/compatible-mode/v1}") String baseUrl,
-            @Value("${gputrain.agent.qwen.api-key:${DASHSCOPE_API_KEY:}}") String apiKey,
+            @Value("${gputrain.agent.qwen.api-key:${QWEN_KEY:${DASHSCOPE_API_KEY:}}}") String apiKey,
             @Value("${gputrain.agent.qwen.model:qwen3.8-27b}") String model,
             @Value("${gputrain.agent.qwen.timeout-seconds:45}") long timeoutSeconds)
     {

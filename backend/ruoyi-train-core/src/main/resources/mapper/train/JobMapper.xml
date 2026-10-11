@@ -48,13 +48,6 @@
         SELECT * FROM train_job WHERE request_key = #{requestKey}
     </select>
 
-    <select id="findByCommandUuid" resultMap="JobResult">
-        SELECT j.* FROM train_job j
-        JOIN train_runner_command c ON c.command_uuid = #{commandUuid}
-        WHERE j.start_command_id = c.command_id OR j.stop_command_id = c.command_id
-        LIMIT 1
-    </select>
-
     <select id="listDueSshJobs" resultMap="JobResult">
         SELECT * FROM train_job
         WHERE execution_mode='SSH' AND status='QUEUED' AND updated_at &lt;= #{cutoff}
@@ -109,17 +102,4 @@
         WHERE job_id = #{jobId} AND status = #{expectedStatus}
     </update>
 
-    <update id="attachStartCommand">
-        UPDATE train_job
-        SET runner_id = #{runnerId}, start_command_id = #{startCommandId},
-            process_spec_json = CAST(#{processSpecJson} AS JSON),
-            status = 'STARTING', updated_at = #{updatedAt}
-        WHERE job_id = #{jobId}
-    </update>
-
-    <update id="attachStopCommand">
-        UPDATE train_job
-        SET stop_command_id = #{stopCommandId}, updated_at = #{updatedAt}
-        WHERE job_id = #{jobId}
-    </update>
 </mapper>

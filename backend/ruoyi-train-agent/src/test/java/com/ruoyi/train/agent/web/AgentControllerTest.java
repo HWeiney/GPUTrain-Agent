@@ -20,6 +20,19 @@ class AgentControllerTest
     void executionDraftRequiresManagePermission() throws Exception
     { assertPermission("executionDraft", AgentController.ExecutionDraftRequest.class, "train:job:manage"); }
 
+    @Test
+    void proposalDraftRequiresProposalExecutePermission() throws Exception
+    { assertPermission("proposalDraft", AgentController.ProposalDraftRequest.class, "train:proposal:execute"); }
+
+    @Test
+    void memoryEndpointRequiresProposalViewPermission() throws Exception
+    {
+        Method method = AgentController.class.getMethod("memory", long.class);
+        PreAuthorize auth = method.getAnnotation(PreAuthorize.class);
+        assertNotNull(auth);
+        assertEquals("@ss.hasPermi('train:proposal:view')", auth.value());
+    }
+
     private void assertPermission(String methodName, Class<?> argument, String permission) throws Exception
     {
         Method method = AgentController.class.getMethod(methodName, argument);

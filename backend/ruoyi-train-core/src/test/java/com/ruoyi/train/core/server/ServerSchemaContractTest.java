@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ruoyi.framework.config.ApplicationConfig;
 import com.ruoyi.framework.config.CredentialSafeDruidConfiguration;
 import com.ruoyi.train.core.server.domain.ServerAccountRecord;
 import com.ruoyi.train.core.server.domain.ServerGpuDeviceRecord;
@@ -26,6 +27,13 @@ import com.ruoyi.train.core.server.mapper.ServerGpuDeviceMapper;
 import com.ruoyi.train.core.server.mapper.ServerGpuSnapshotMapper;
 import com.ruoyi.train.core.server.mapper.ServerMapper;
 import com.ruoyi.train.core.server.mapper.ServerSnapshotMapper;
+import com.ruoyi.train.core.server.terminal.domain.TerminalSessionRecord;
+import com.ruoyi.train.core.server.terminal.mapper.TerminalAuditMapper;
+import com.ruoyi.train.core.server.proposal.domain.CommandProposalRecord;
+import com.ruoyi.train.core.server.proposal.mapper.ProposalMapper;
+import com.ruoyi.train.core.server.agentmemory.domain.AgentMemoryRecord;
+import com.ruoyi.train.core.server.agentmemory.domain.MemoryTurnView;
+import com.ruoyi.train.core.server.agentmemory.mapper.AgentMemoryMapper;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import com.alibaba.druid.filter.stat.StatFilter;
 import com.alibaba.druid.pool.DruidDataSource;
@@ -49,6 +57,7 @@ import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.mybatis.spring.annotation.MapperScan;
 
 class ServerSchemaContractTest
 {
@@ -86,7 +95,207 @@ class ServerSchemaContractTest
     void composeMountsEighthMigration() throws Exception
     {
         String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
-        assertTrue(compose.contains("../backend/sql/gputrain_phase8_ssh_servers.sql:/docker-entrypoint-initdb.d/08-gputrain-ssh-servers.sql:ro"));
+        assertTrue(compose.contains("../backend/sql/gputrain_phase8_ssh_servers.sql:/docker-entrypoint-initdb.d/05-gputrain-ssh-servers.sql:ro"));
+    }
+
+    @Test
+    void terminalAuditMigrationDefinesThreeStateSessionTable() throws Exception
+    {
+        Path migration = Path.of("../sql/gputrain_phase10_terminal.sql");
+        assertTrue(Files.isRegularFile(migration), "terminal audit migration must exist");
+        String sql = Files.readString(migration);
+        assertAll(
+            () -> assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS train_terminal_session (")),
+            () -> assertTrue(sql.contains("session_uuid CHAR(36) NOT NULL")),
+            () -> assertTrue(sql.contains("PRIMARY KEY (session_uuid)")),
+            () -> assertTrue(sql.contains("CONSTRAINT ck_train_terminal_status CHECK (status IN ('ACTIVE', 'CLOSED', 'ERROR'))")),
+            () -> assertTrue(sql.contains("KEY idx_train_terminal_actor_time (actor_user_id, opened_at)")),
+            () -> assertTrue(sql.contains("KEY idx_train_terminal_server_time (server_id, opened_at)")),
+            () -> assertFalse(sql.matches("(?is).*\\b(?:DROP|ALTER|TRUNCATE)\\s+TABLE\\b.*")));
+        String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
+        assertTrue(compose.contains("../backend/sql/gputrain_phase10_terminal.sql:/docker-entrypoint-initdb.d/08-gputrain-terminal.sql:ro"));
+    }
+
+    @Test
+    void terminalAuditMapperMatchesInterfaceAndThreeStateSemantics() throws Exception
+    {
+        String namespace = TerminalAuditMapper.class.getName();
+        Configuration configuration = new Configuration();
+        String resource = "mapper/train/TerminalAuditMapper.xml";
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource))
+        {
+            assertNotNull(stream, resource);
+            new XMLMapperBuilder(stream, configuration, resource, configuration.getSqlFragments()).parse();
+        }
+        for (Method method : TerminalAuditMapper.class.getDeclaredMethods())
+            assertTrue(configuration.hasStatement(namespace + "." + method.getName()), method.toString());
+        String insert = configuration.getMappedStatement(namespace + ".insertAttempt")
+            .getBoundSql(new TerminalSessionRecord("uuid", 1L, 2L, 3L, "ACTIVE", null, null, Instant.now(), null))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(insert.contains("INSERT INTO train_terminal_session"));
+        assertTrue(insert.contains("session_uuid, actor_user_id, server_id, account_id, status, close_reason, error_code, opened_at, closed_at"));
+        String markError = configuration.getMappedStatement(namespace + ".markError")
+            .getBoundSql(Map.of("sessionUuid", "uuid", "errorCode", "AUTH_FAILED", "closedAt", Instant.now()))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(markError.contains("SET status = 'ERROR', error_code = ?, closed_at = ?"));
+        assertTrue(markError.contains("WHERE session_uuid = ?"));
+        String finish = configuration.getMappedStatement(namespace + ".finishAttempt")
+            .getBoundSql(Map.of("sessionUuid", "uuid", "closeReason", "IDLE_TIMEOUT", "closedAt", Instant.now()))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(finish.contains("SET status = 'CLOSED', close_reason = ?, closed_at = ?"));
+        assertTrue(finish.contains("WHERE session_uuid = ? AND status = 'ACTIVE'"));
+        // mapper 包必须落在 MapperScan 通配范围内，运行时才会生成代理
+        MapperScan scan = ApplicationConfig.class.getAnnotation(MapperScan.class);
+        assertTrue(List.of(scan.value()).contains("com.ruoyi.**.mapper"),
+            "terminal mapper package must be covered by MapperScan wildcard");
+    }
+
+    @Test
+    void proposalMigrationDefinesFourStateProposalTable() throws Exception
+    {
+        Path migration = Path.of("../sql/gputrain_phase11_proposals.sql");
+        assertTrue(Files.isRegularFile(migration), "proposal migration must exist");
+        String sql = Files.readString(migration);
+        assertAll(
+            () -> assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS train_command_proposal (")),
+            () -> assertTrue(sql.contains("proposal_id CHAR(36) NOT NULL")),
+            () -> assertTrue(sql.contains("PRIMARY KEY (proposal_id)")),
+            () -> assertTrue(sql.contains("args_json VARCHAR(2048) NOT NULL")),
+            () -> assertTrue(sql.contains("rendered_command VARCHAR(1024) NOT NULL")),
+            () -> assertTrue(sql.contains("stdout MEDIUMTEXT NULL")),
+            () -> assertTrue(sql.contains("CONSTRAINT ck_train_proposal_source CHECK (source IN ('MANUAL', 'AGENT'))")),
+            () -> assertTrue(sql.contains("CONSTRAINT ck_train_proposal_status CHECK (status IN ('PENDING', 'EXECUTED', 'REJECTED', 'FAILED'))")),
+            () -> assertTrue(sql.contains("KEY idx_train_proposal_actor_time (actor_user_id, created_at)")),
+            () -> assertTrue(sql.contains("KEY idx_train_proposal_status (status)")),
+            () -> assertFalse(sql.matches("(?is).*\\b(?:DROP|ALTER|TRUNCATE)\\s+TABLE\\b.*")));
+        String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
+        assertTrue(compose.contains("../backend/sql/gputrain_phase11_proposals.sql:/docker-entrypoint-initdb.d/09-gputrain-proposals.sql:ro"));
+    }
+
+    @Test
+    void proposalMapperMatchesInterfaceAndCasSemantics() throws Exception
+    {
+        String namespace = ProposalMapper.class.getName();
+        Configuration configuration = new Configuration();
+        String resource = "mapper/train/ProposalMapper.xml";
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource))
+        {
+            assertNotNull(stream, resource);
+            new XMLMapperBuilder(stream, configuration, resource, configuration.getSqlFragments()).parse();
+        }
+        for (Method method : ProposalMapper.class.getDeclaredMethods())
+            assertTrue(configuration.hasStatement(namespace + "." + method.getName()), method.toString());
+        String markExecuted = configuration.getMappedStatement(namespace + ".markExecuted")
+            .getBoundSql(Map.of("proposalId", "uuid", "decidedAt", Instant.now()))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(markExecuted.contains("SET status = 'EXECUTED', decided_at = ?"));
+        assertTrue(markExecuted.contains("WHERE proposal_id = ? AND status = 'PENDING'"));
+        String markRejected = configuration.getMappedStatement(namespace + ".markRejected")
+            .getBoundSql(Map.of("proposalId", "uuid", "decidedAt", Instant.now()))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(markRejected.contains("SET status = 'REJECTED', decided_at = ?"));
+        assertTrue(markRejected.contains("WHERE proposal_id = ? AND status = 'PENDING'"));
+        String attachResult = configuration.getMappedStatement(namespace + ".attachResult")
+            .getBoundSql(Map.of("proposalId", "uuid", "exitCode", 0, "stdout", "out", "stderr", "",
+                "executedAt", Instant.now())).getSql().replaceAll("\\s+", " ");
+        assertTrue(attachResult.contains("SET exit_code = ?, stdout = ?, stderr = ?, executed_at = ?"));
+        assertTrue(attachResult.contains("WHERE proposal_id = ? AND status = 'EXECUTED' AND exit_code IS NULL"));
+        String markFailed = configuration.getMappedStatement(namespace + ".markFailed")
+            .getBoundSql(Map.of("proposalId", "uuid", "errorCode", "AUTH_FAILED", "executedAt", Instant.now()))
+            .getSql().replaceAll("\\s+", " ");
+        assertTrue(markFailed.contains("SET status = 'FAILED', error_code = ?, executed_at = ?"));
+        assertTrue(markFailed.contains("WHERE proposal_id = ? AND status = 'EXECUTED' AND exit_code IS NULL"));
+        // resultMap 构造器映射与 record 组件一一对应
+        for (var map : configuration.getResultMaps())
+        {
+            if (!map.getId().startsWith(namespace + ".")) continue;
+            Class<?>[] types = map.getConstructorResultMappings().stream()
+                .map(ResultMapping::getJavaType).toArray(Class<?>[]::new);
+            assertDoesNotThrow(() -> CommandProposalRecord.class.getDeclaredConstructor(types), map.getId());
+        }
+        // proposal mapper 包必须落在 MapperScan 通配范围内，运行时才会生成代理
+        MapperScan scan = ApplicationConfig.class.getAnnotation(MapperScan.class);
+        assertTrue(List.of(scan.value()).contains("com.ruoyi.**.mapper"),
+            "proposal mapper package must be covered by MapperScan wildcard");
+    }
+
+    @Test
+    void proposalRationaleMigrationIsIdempotentAlter() throws Exception
+    {
+        Path migration = Path.of("../sql/gputrain_phase12_proposal_rationale.sql");
+        assertTrue(Files.isRegularFile(migration), "rationale migration must exist");
+        String sql = Files.readString(migration);
+        assertAll(
+            () -> assertTrue(sql.contains("information_schema.COLUMNS")),
+            () -> assertTrue(sql.contains("TABLE_NAME = 'train_command_proposal'")),
+            () -> assertTrue(sql.contains("COLUMN_NAME = 'rationale'")),
+            () -> assertTrue(sql.contains(
+                "ALTER TABLE train_command_proposal ADD COLUMN rationale VARCHAR(1024) NULL AFTER source")),
+            () -> assertFalse(sql.matches("(?is).*\\bDROP\\s+TABLE\\b.*")),
+            () -> assertFalse(sql.matches("(?is).*\\bTRUNCATE\\s+TABLE\\b.*")));
+        String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
+        assertTrue(compose.contains(
+            "../backend/sql/gputrain_phase12_proposal_rationale.sql:/docker-entrypoint-initdb.d/10-gputrain-proposal-rationale.sql:ro"));
+    }
+
+    @Test
+    void agentMemoryMigrationDefinesAppendOnlyTurnLog() throws Exception
+    {
+        Path migration = Path.of("../sql/gputrain_phase13_agent_memory.sql");
+        assertTrue(Files.isRegularFile(migration), "agent memory migration must exist");
+        String sql = Files.readString(migration);
+        assertAll(
+            () -> assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS train_agent_memory (")),
+            () -> assertTrue(sql.contains("memory_id CHAR(36) NOT NULL")),
+            () -> assertTrue(sql.contains("PRIMARY KEY (memory_id)")),
+            () -> assertTrue(sql.contains("intent_text VARCHAR(4000) NOT NULL")),
+            () -> assertTrue(sql.contains("args_json VARCHAR(2048) NOT NULL")),
+            () -> assertTrue(sql.contains("rationale VARCHAR(1024) NOT NULL")),
+            () -> assertTrue(sql.contains("proposal_id CHAR(36) NULL")),
+            () -> assertTrue(sql.contains("KEY idx_agent_memory_actor_server_time (actor_user_id, server_id, created_at)")),
+            () -> assertTrue(sql.contains("KEY idx_agent_memory_proposal (proposal_id)")),
+            () -> assertFalse(sql.matches("(?is).*\\b(?:DROP|ALTER|TRUNCATE)\\s+TABLE\\b.*")));
+        String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
+        assertTrue(compose.contains(
+            "../backend/sql/gputrain_phase13_agent_memory.sql:/docker-entrypoint-initdb.d/11-gputrain-agent-memory.sql:ro"));
+    }
+
+    @Test
+    void agentMemoryMapperMatchesInterfaceAndJoinSemantics() throws Exception
+    {
+        String namespace = AgentMemoryMapper.class.getName();
+        Configuration configuration = new Configuration();
+        String resource = "mapper/train/AgentMemoryMapper.xml";
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource))
+        {
+            assertNotNull(stream, resource);
+            new XMLMapperBuilder(stream, configuration, resource, configuration.getSqlFragments()).parse();
+        }
+        for (Method method : AgentMemoryMapper.class.getDeclaredMethods())
+            assertTrue(configuration.hasStatement(namespace + "." + method.getName()), method.toString());
+        String history = configuration.getMappedStatement(namespace + ".history")
+            .getBoundSql(Map.of("actorUserId", 1L, "serverId", 2L, "limit", 8))
+            .getSql().replaceAll("\\s+", " ");
+        // JOIN 提案表取结果 + stdout 有界摘要 + 本人 + 服务器隔离 + 最近 N 条
+        assertTrue(history.contains("LEFT JOIN train_command_proposal p ON m.proposal_id = p.proposal_id"));
+        assertTrue(history.contains("LEFT(p.stdout, 600) AS output_excerpt"));
+        assertTrue(history.contains("WHERE m.actor_user_id = ? AND m.server_id = ?"));
+        assertTrue(history.contains("ORDER BY m.created_at DESC"));
+        assertTrue(history.contains("LIMIT ?"));
+        assertFalse(history.contains("*"), "explicit projections required: history");
+        // resultMap 构造器映射与 record 组件一一对应（insert → AgentMemoryRecord，history → MemoryTurnView）
+        for (var map : configuration.getResultMaps())
+        {
+            if (!map.getId().startsWith(namespace + ".")) continue;
+            Class<?> record = map.getId().endsWith("MemoryTurnResult")
+                ? MemoryTurnView.class : AgentMemoryRecord.class;
+            Class<?>[] types = map.getConstructorResultMappings().stream()
+                .map(ResultMapping::getJavaType).toArray(Class<?>[]::new);
+            assertDoesNotThrow(() -> record.getDeclaredConstructor(types), map.getId());
+        }
+        MapperScan scan = ApplicationConfig.class.getAnnotation(MapperScan.class);
+        assertTrue(List.of(scan.value()).contains("com.ruoyi.**.mapper"),
+            "agent memory mapper package must be covered by MapperScan wildcard");
     }
 
     @Test

@@ -15,6 +15,8 @@ import com.ruoyi.train.core.server.mapper.*;
 @Service
 public class ServerDeviceQueryService
 {
+    public static final long MIN_TRAINING_FREE_MEMORY_MIB = 70_000;
+
     public record DeviceView(Long serverId, Long accountId, String gpuUuid, String name,
         String identityState, boolean schedulable, Instant sampledAt, long totalMemoryMiB,
         long usedMemoryMiB, int utilizationPercent, String migMode, int externalProcessCount) { }
@@ -58,8 +60,11 @@ public class ServerDeviceQueryService
                 : gpu.gpuUuid().startsWith("MIG-") || "ENABLED".equals(gpu.migMode()) ? DeviceIdentityState.MIG_UNSUPPORTED
                 : !Set.of("DISABLED", "N/A", "[N/A]").contains(gpu.migMode()) ? DeviceIdentityState.UNOBSERVABLE
                 : external > 0 ? DeviceIdentityState.EXTERNAL_OCCUPIED : DeviceIdentityState.OBSERVED;
+            boolean enoughMemory = gpu.totalMemoryMiB() - gpu.usedMemoryMiB() >= MIN_TRAINING_FREE_MEMORY_MIB;
+            boolean schedulable = current && external >= 0 && !gpu.gpuUuid().startsWith("MIG-")
+                && Set.of("DISABLED", "N/A", "[N/A]").contains(gpu.migMode()) && enoughMemory;
             result.add(new DeviceView(serverId, accountId, gpu.gpuUuid(), device.name(), state.name(),
-                state.isSchedulable(), gpu.sampledAt(), gpu.totalMemoryMiB(), gpu.usedMemoryMiB(),
+                schedulable, gpu.sampledAt(), gpu.totalMemoryMiB(), gpu.usedMemoryMiB(),
                 gpu.utilizationPercent(), gpu.migMode(), Math.max(0, external)));
         }
         return List.copyOf(result);

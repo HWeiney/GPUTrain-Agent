@@ -15,8 +15,8 @@ export function jobStatusText(status: string): string {
 }
 
 export function jobAction(job: TrainJob): JobAction {
+  if (job.executionMode !== 'SSH') return 'none'
   if (job.status === 'PENDING' || job.status === 'QUEUED') return 'cancel'
-  if (job.executionMode === 'SSH' && ['STARTING', 'RUNNING', 'UNKNOWN', 'RECONCILING', 'QUARANTINED'].includes(job.status)) return 'stop'
-  if (job.startCommandId !== null && ['STARTING', 'RUNNING', 'QUARANTINED'].includes(job.status)) return 'stop'
+  if (['STARTING', 'RUNNING', 'UNKNOWN', 'RECONCILING', 'QUARANTINED'].includes(job.status)) return 'stop'
   return 'none'
 }

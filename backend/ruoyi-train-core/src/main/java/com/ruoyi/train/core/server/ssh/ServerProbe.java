@@ -35,7 +35,7 @@ public class ServerProbe
             CommandResult manager = run(session, List.of("systemctl", "--user", "is-system-running"));
             boolean systemd = (manager.exitCode() == 0 && manager.stdout().strip().equals("running"))
                 || (manager.exitCode() == 1 && manager.stdout().strip().equals("degraded"));
-            CommandResult linger = run(session, List.of("loginctl", "show-user", "--property=Linger"));
+            CommandResult linger = run(session, List.of("loginctl", "show-user", account.linuxUsername(), "--property=Linger"));
             boolean persistent = systemd && linger.exitCode() == 0 && linger.stdout().strip().equals("Linger=yes");
             boolean appendLogs = false;
             if (persistent)

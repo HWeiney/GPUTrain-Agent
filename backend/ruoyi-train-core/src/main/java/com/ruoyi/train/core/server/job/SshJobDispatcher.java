@@ -19,7 +19,7 @@ import com.ruoyi.train.core.server.domain.ServerAccountRecord;
 import com.ruoyi.train.core.server.domain.ServerRecord;
 import com.ruoyi.train.core.server.mapper.ServerAccountMapper;
 import com.ruoyi.train.core.server.mapper.ServerMapper;
-import com.ruoyi.train.runner.protocol.ProcessSpec;
+import com.ruoyi.train.core.job.domain.ProcessSpec;
 
 /** Claims queued work in short DB transactions and performs SSH outside those transactions. */
 @Component

@@ -20,7 +20,7 @@
         </template>
       </el-table-column>
       <el-table-column label="执行目标" width="150">
-        <template #default="{ row }">{{ row.executionMode === 'SSH' ? `服务器 #${row.serverId}` : `Runner ${row.runnerId ?? '-'}` }}</template>
+        <template #default="{ row }">{{ row.executionMode === 'SSH' ? `服务器 #${row.serverId}` : '历史任务（只读）' }}</template>
       </el-table-column>
       <el-table-column label="GPU 数" prop="gpuCount" width="90" />
       <el-table-column label="状态" min-width="130">
@@ -97,7 +97,7 @@
       <template v-if="detailJob">
         <div class="job-summary">
           <el-tag :type="tagType(detailJob.status)" size="small">{{ jobStatusText(detailJob.status) }}</el-tag>
-          <span>{{ detailJob.executionMode === 'SSH' ? `服务器 #${detailJob.serverId}` : `Runner ${detailJob.runnerId ?? '-'}` }}</span>
+          <span>{{ detailJob.executionMode === 'SSH' ? `服务器 #${detailJob.serverId}` : '历史任务（只读）' }}</span>
           <span>{{ detailJob.gpuCount }} 张 GPU</span>
           <span>最低空闲显存 {{ detailJob.minMemoryMiB }} MiB/卡</span>
           <span>创建于 {{ formatTime(detailJob.createdAt) }}</span>

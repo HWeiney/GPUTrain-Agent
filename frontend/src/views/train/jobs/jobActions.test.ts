@@ -5,14 +5,12 @@ import { jobAction, jobStatusText } from './jobActions'
 const job = (status: string, startCommandId: number | null = null, executionMode?: string) => ({ status, startCommandId, executionMode } as TrainJob)
 
 describe('job actions', () => {
-  it('cancels jobs with no runner command', () => {
-    expect(jobAction(job('PENDING'))).toBe('cancel')
-    expect(jobAction(job('QUEUED'))).toBe('cancel')
+  it('cancels queued SSH jobs only', () => {
+    expect(jobAction(job('QUEUED', null, 'SSH'))).toBe('cancel')
+    expect(jobAction(job('QUEUED', null, 'RUNNER_LEGACY'))).toBe('none')
   })
-  it('stops only jobs with a start command', () => {
-    expect(jobAction(job('STARTING', 12))).toBe('stop')
-    expect(jobAction(job('RUNNING', 12))).toBe('stop')
-    expect(jobAction(job('RUNNING'))).toBe('none')
+  it('keeps historical jobs read only', () => {
+    expect(jobAction(job('RUNNING', 12, 'RUNNER_LEGACY'))).toBe('none')
   })
   it('offers stop for SSH jobs whose remote state needs a stop or reconciliation', () => {
     expect(jobAction(job('RUNNING', null, 'SSH'))).toBe('stop')

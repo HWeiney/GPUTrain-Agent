@@ -11,7 +11,7 @@ public record JobRecord(Long jobId, String jobUuid, Long ownerUserId,
         String executionMode, Long serverId, Long accountId,
         String remoteUnitName, String remoteWorkingDirectory)
 {
-    /** Keeps source compatibility for Runner-era callers while new SSH submissions opt in explicitly. */
+    /** Historical record constructor retained for read-only legacy data tests. */
     public JobRecord(Long jobId, String jobUuid, Long ownerUserId,
             Long runnerId, int gpuCount, long minMemoryMiB,
             String allowedGpuUuidsJson, String deniedGpuUuidsJson,

@@ -2,11 +2,11 @@ package com.ruoyi.train.core.server.ssh;
 
 import java.time.Instant;
 import java.util.*;
-import com.ruoyi.train.runner.protocol.gpu.GpuSnapshot;
-import com.ruoyi.train.runner.protocol.gpu.GpuProcessInfo;
+import com.ruoyi.train.core.server.domain.GpuSnapshot;
+import com.ruoyi.train.core.server.domain.GpuProcessInfo;
 import com.ruoyi.train.core.gpu.domain.DeviceIdentityState;
 
-/** The Runner's fixed CSV contract, with bounded inventory fields and fail-closed occupancy. */
+/** Fixed NVIDIA CSV contract, with bounded inventory fields and fail-closed occupancy. */
 public final class SshNvidiaSmiParser
 {
     public record Query(List<GpuSnapshot> gpus, String driverVersion)

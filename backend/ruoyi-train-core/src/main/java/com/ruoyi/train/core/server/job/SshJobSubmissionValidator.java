@@ -43,6 +43,7 @@ public final class SshJobSubmissionValidator
                 && device.accountId().equals(submission.accountId()) && device.sampledAt() != null
                 && !device.sampledAt().isBefore(now.minusSeconds(30))
                 && !device.sampledAt().isAfter(now.plusSeconds(60))
+                && device.totalMemoryMiB() - device.usedMemoryMiB() >= submission.minFreeMemoryMiB()
                 && !Set.of("UNOBSERVABLE", "MIG_UNSUPPORTED").contains(device.identityState()))
                 .map(DeviceView::gpuUuid).collect(Collectors.toSet());
         if (!fresh.containsAll(selected)) throw invalid("GPU_SNAPSHOT_STALE");

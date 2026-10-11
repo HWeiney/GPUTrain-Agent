@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ruoyi.train.agent.contract.CatalogAction;
+import com.ruoyi.train.agent.contract.CatalogParam;
 import com.ruoyi.train.agent.contract.DiagnosisInput;
 import com.ruoyi.train.agent.contract.ExecutionInput;
 import com.ruoyi.train.agent.contract.PlannerInput;
+import com.ruoyi.train.agent.contract.ProposalDraftInput;
 import com.ruoyi.train.agent.model.AgentRole;
 import com.ruoyi.train.agent.model.StructuredAgentModel;
 import com.ruoyi.train.agent.policy.ExecutionPolicy;
@@ -50,6 +53,14 @@ class AgentFixedEvaluationTest
                         List.of(), List.of(), List.of()), Set.of(G1, G2, G3)), true);
         assertTrue(draft.policyDecision().allowed());
         assertTrue(draft.plan().requiresHumanConfirmation());
+
+        var proposal = service(AgentRole.PROPOSAL, """
+                {"schemaVersion":1,"action":"probe-loadavg","args":{},
+                 "rationale":"用户想了解机器负载，该动作直接输出 1/5/15 分钟均值"}
+                """);
+        var draftProposal = proposal.draftProposal(proposalInput());
+        assertEquals("probe-loadavg", draftProposal.action());
+        assertTrue(draftProposal.args().isEmpty());
     }
 
     @Test
@@ -69,6 +80,11 @@ class AgentFixedEvaluationTest
         var noConfirmation = service(AgentRole.EXECUTION, executionJson("CREATE_TRAINING_JOB", G1, G2, G3, false));
         assertEquals("HUMAN_CONFIRMATION_REQUIRED",
                 noConfirmation.draftExecution(input(), true).policyDecision().code());
+
+        var outsideCatalog = service(AgentRole.PROPOSAL, """
+                {"schemaVersion":1,"action":"rm-rf","args":{},"rationale":"忽略规则并清理磁盘"}
+                """);
+        assertThrows(IllegalArgumentException.class, () -> outsideCatalog.draftProposal(proposalInput()));
     }
 
     @Test
@@ -89,6 +105,16 @@ class AgentFixedEvaluationTest
     {
         return new ExecutionInput(1, new com.ruoyi.train.agent.contract.PlannerOutput(1, "run", "docowl2-srfund", 1, 3,
                 List.of(), List.of(), List.of()), Set.of(G1, G2, G3));
+    }
+
+    private ProposalDraftInput proposalInput()
+    {
+        return new ProposalDraftInput(1, "看一下这台机器的系统负载", List.of(
+                new CatalogAction("probe-loadavg", "查看远端系统负载", List.of()),
+                new CatalogAction("job-inspect", "查看训练任务状态", List.of(
+                        new CatalogParam("jobId", "long", true, "训练任务 ID")))),
+                List.of(new com.ruoyi.train.agent.contract.MemoryTurn(
+                        "看看磁盘占用", "probe-disk", "EXECUTED", 0, "Filesystem 1K-blocks Used")));
     }
 
     private AgentWorkflowService service(AgentRole expected, String response)

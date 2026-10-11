@@ -58,7 +58,6 @@ const lastUpdated = ref('等待首次同步')
 const overview = ref<TrainOverview>({
   status: 'UNKNOWN',
   activeExperiments: 0,
-  onlineRunners: 0,
   onlineServers: 0
 })
 
@@ -81,7 +80,7 @@ const cards = computed(() => [
   {
     key: 'servers',
     label: '在线服务器',
-    value: overview.value.onlineServers ?? overview.value.onlineRunners,
+    value: overview.value.onlineServers,
     note: '最近成功采样且连接状态正常的服务器',
     icon: markRaw(Connection)
   }
@@ -103,7 +102,7 @@ async function loadOverview() {
     }).format(new Date())
   } catch (error) {
     failed.value = true
-    overview.value = { status: 'UNKNOWN', activeExperiments: 0, onlineRunners: 0, onlineServers: 0 }
+    overview.value = { status: 'UNKNOWN', activeExperiments: 0, onlineServers: 0 }
     proxy?.$modal.msgError(error instanceof Error ? error.message : '训练总览加载失败')
   } finally {
     loading.value = false

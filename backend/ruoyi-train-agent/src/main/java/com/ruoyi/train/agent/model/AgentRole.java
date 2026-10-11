@@ -2,5 +2,5 @@ package com.ruoyi.train.agent.model;
 
 public enum AgentRole
 {
-    PLANNER, DIAGNOSIS, EXECUTION
+    PLANNER, DIAGNOSIS, EXECUTION, PROPOSAL
 }

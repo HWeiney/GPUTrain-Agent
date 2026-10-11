@@ -13,9 +13,6 @@ import org.junit.jupiter.api.Test;
 import com.ruoyi.train.core.job.domain.JobRecord;
 import com.ruoyi.train.core.job.mapper.JobMapper;
 import com.ruoyi.train.core.job.service.JobService;
-import com.ruoyi.train.core.gpu.service.GpuLeaseService;
-import com.ruoyi.train.core.runner.mapper.RunnerCommandMapper;
-import com.ruoyi.train.core.runner.service.RunnerCommandService;
 import com.ruoyi.train.core.observability.JobObservabilityService;
 
 class McpQueryServiceTest
@@ -73,7 +70,6 @@ class McpQueryServiceTest
 
     private static JobService jobs(JobMapper mapper)
     {
-        return new JobService(mapper, mock(GpuLeaseService.class), mock(RunnerCommandService.class),
-                mock(RunnerCommandMapper.class), new com.fasterxml.jackson.databind.ObjectMapper());
+        return new JobService(mapper, new com.fasterxml.jackson.databind.ObjectMapper(), null, null, null);
     }
 }

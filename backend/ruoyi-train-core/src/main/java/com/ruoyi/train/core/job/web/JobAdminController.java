@@ -66,8 +66,8 @@ public class JobAdminController
                 "NPROC_PER_NODE", "3", "MAX_STEPS", Integer.toString(request.maxSteps()),
                 "RUN_MODE", "foreground", "AUTO_EVAL", "False", "TRAIN_EVAL_STRATEGY", "no",
                 "RUN_ID", "gputrain-" + request.requestKey());
-        if ((request.serverId() == null) != (request.accountId() == null))
-            throw new IllegalArgumentException("Server and account are required together");
+        if (request.serverId() == null || request.accountId() == null)
+            throw new IllegalArgumentException("SSH server and account are required");
         return new JobSubmission(owner, 3, 0, allowedUuids, Set.of(), request.requestKey(),
                 "/data/hanw/hw_code/gputrain-test", "/usr/bin/bash",
                 List.of("/model/hanw/ms-swift-imp3-research/fintune_val_shell/run_swift_docowl2_logidoc.sh",
@@ -99,8 +99,9 @@ public class JobAdminController
     {
         long userId = SecurityUtils.getUserId();
         JobRecord job = jobService.getOwned(jobId, userId, SecurityUtils.isAdmin(userId));
-        if ("SSH".equals(job.executionMode())) return AjaxResult.success(sshJobDispatcher.stop(jobId, Instant.now()));
-        return AjaxResult.success(jobService.stop(jobId, Instant.now()));
+        if (!"SSH".equals(job.executionMode()))
+            throw new IllegalArgumentException("LEGACY_JOB_READ_ONLY");
+        return AjaxResult.success(sshJobDispatcher.stop(jobId, Instant.now()));
     }
 
     @PreAuthorize("@ss.hasPermi('train:job:manage')")

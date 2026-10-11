@@ -95,6 +95,8 @@ class ServerProbeServiceTest
             assertEquals(clock.instant(), store.accounts.get(22L).lastProbeAt());
             assertEquals("ONLINE", store.accounts.get(11L).status());
             assertEquals("EXTERNAL_OCCUPIED", query().list(1L,11L,7L).get(0).identityState());
+            assertTrue(query().list(1L,11L,7L).get(0).schedulable(),
+                    "external processes do not block a GPU with at least 70,000 MiB free");
             assertEquals(1, query().list(1L,11L,7L).get(0).externalProcessCount());
             assertEquals("UNOBSERVABLE", query().list(2L,22L,7L).get(0).identityState());
             assertEquals(NOW, query().list(2L,22L,7L).get(0).sampledAt());
@@ -114,6 +116,21 @@ class ServerProbeServiceTest
             assertEquals(3, gateway.calls);
             assertEquals("ONLINE", store.accounts.get(11L).status());
             assertEquals(3, store.outcomeWrites);
+        }
+    }
+
+    @Test void externalGpuIsUnavailableWhenFreeMemoryFallsBelowTrainingMinimum() {
+        try (var service = service()) {
+            service.probe(1L,11L);
+            List<Object> key = List.of(1L,11L,"GPU-same");
+            var before = store.gpuSnapshots.get(key);
+            store.gpuSnapshots.put(key, new ServerGpuSnapshotRecord(before.snapshotId(), before.serverId(),
+                    before.accountId(), before.gpuUuid(), before.visibleIndex(), before.totalMemoryMiB(),
+                    11000, 100, before.migMode(), before.driverVersion(), before.computeProcessesJson(),
+                    before.sampledAt(), before.createdAt()));
+            var device = query().list(1L,11L,7L).get(0);
+            assertFalse(device.schedulable());
+            assertEquals(100, device.utilizationPercent(), "utilization does not affect scheduling");
         }
     }
 

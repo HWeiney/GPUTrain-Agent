@@ -26,10 +26,10 @@ public class ServerProbeTest
             replies.put(List.of("cat", "/proc/loadavg"), new CommandResult(0, "0.50 0.20 0.10 1/300 42\n", ""));
             replies.put(List.of("cat", "/proc/meminfo"), new CommandResult(0, "MemTotal: 10000 kB\nMemAvailable: 4000 kB\n", ""));
             replies.put(List.of("df", "-Pk"), new CommandResult(0, "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda 20000 5000 15000 25% /\ntmpfs 1000 0 1000 0% /run\n", ""));
-            replies.put(List.of("nvidia-smi", "--query-gpu=gpu_uuid,name,index,memory.total,memory.used,utilization.gpu,mig.mode.current,driver_version", "--format=csv,noheader,nounits"), new CommandResult(0, "GPU-same, A100, 0, 80000, 1000, 20, Disabled, 550\n", ""));
+            replies.put(List.of("nvidia-smi", "--query-gpu=gpu_uuid,name,index,memory.total,memory.used,utilization.gpu,mig.mode.current,driver_version", "--format=csv,noheader,nounits"), new CommandResult(0, "GPU-same, A100, 0, 80000, 1000, 100, Disabled, 550\n", ""));
             replies.put(List.of("nvidia-smi", "--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"), new CommandResult(0, "GPU-same, 123, [Not Found], 1000\n", ""));
             replies.put(List.of("systemctl", "--user", "is-system-running"), new CommandResult(0, "running\n", ""));
-            replies.put(List.of("loginctl", "show-user", "--property=Linger"), new CommandResult(0, "Linger=yes\n", ""));
+            replies.put(List.of("loginctl", "show-user", "linux", "--property=Linger"), new CommandResult(0, "Linger=yes\n", ""));
             replies.put(List.of("systemd-run", "--user", "--wait", "--collect", "--unit=gputrain-capability-probe.service",
                     "--property=StandardOutput=append:/dev/null", "--property=StandardError=append:/dev/null", "/usr/bin/true"),
                     new CommandResult(0, "", ""));
@@ -65,6 +65,20 @@ public class ServerProbeTest
         assertEquals(Map.of("ssh", true, "gpu", true, "systemdUser", true, "persistentUserManager", true, "appendLogs", true), result.capabilities());
         assertEquals("ONLINE", result.status());
         assertEquals(8, gateway.commands.size());
+    }
+
+    @Test void lingerProbeTargetsTheAssignedLinuxAccount()
+    {
+        FixtureGateway gateway = new FixtureGateway();
+        gateway.replies.put(List.of("loginctl", "show-user", "--property=Linger"),
+                new CommandResult(0, "", ""));
+        gateway.replies.put(List.of("loginctl", "show-user", "linux", "--property=Linger"),
+                new CommandResult(0, "Linger=yes\n", ""));
+
+        var result = new ServerProbe(gateway).collect(server(1), account(1, 11), NOW);
+
+        assertTrue(result.capabilities().get("persistentUserManager"));
+        assertTrue(gateway.commands.contains(List.of("loginctl", "show-user", "linux", "--property=Linger")));
     }
 
     @Test void missingNvidiaOnlyDisablesGpuCapability()

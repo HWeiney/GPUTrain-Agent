@@ -14,7 +14,7 @@ class TrainOverviewControllerTest
     @Test
     void controllerReturnsOverviewAsAjaxResultData()
     {
-        TrainOverviewController controller = new TrainOverviewController(new TrainOverviewService(null, null, null) {
+        TrainOverviewController controller = new TrainOverviewController(new TrainOverviewService(null, null) {
             @Override public TrainOverview getOverview() { return new TrainOverview("READY", 2, 1); }
         });
 

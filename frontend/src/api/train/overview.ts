@@ -4,8 +4,7 @@ import type { AjaxResult } from '@/types'
 export interface TrainOverview {
   status: string
   activeExperiments: number
-  onlineRunners: number
-  onlineServers?: number
+  onlineServers: number
 }
 
 export function getTrainOverview(): Promise<AjaxResult<TrainOverview>> {

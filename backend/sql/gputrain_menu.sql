@@ -34,12 +34,9 @@ SELECT
     'C', '0', '0', m.perms, 'server', 'admin', NOW(), m.remark
 FROM sys_menu parent
 CROSS JOIN (
-    SELECT 'GPU 设备' AS menu_name, 2 AS order_num, 'devices' AS path,
-           'train/devices/index' AS component, 'train:gpu:view' AS perms,
-           'GPU 设备与外部占用' AS remark
-    UNION ALL
-    SELECT '训练任务', 3, 'jobs', 'train/jobs/index', 'train:job:view',
-           '训练任务与状态机'
+    SELECT '训练任务' AS menu_name, 3 AS order_num, 'jobs' AS path,
+           'train/jobs/index' AS component, 'train:job:view' AS perms,
+           '训练任务与状态机' AS remark
 ) m
 WHERE parent.menu_name = 'GPUTrain'
   AND parent.parent_id = 0
@@ -55,14 +52,14 @@ FROM sys_menu menu
 WHERE (
         (menu.menu_name = 'GPUTrain' AND menu.parent_id = 0)
         OR menu.perms = 'train:overview:view'
-        OR menu.perms IN ('train:gpu:view', 'train:job:view')
+        OR menu.perms = 'train:job:view'
       )
   AND NOT EXISTS (
       SELECT 1 FROM sys_role_menu role_menu
       WHERE role_menu.role_id = 1 AND role_menu.menu_id = menu.menu_id
   );
 
--- SSH inventory permissions are deliberately distinct from Runner enrollment permissions.
+-- SSH inventory permissions.
 INSERT INTO sys_menu
     (menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type,
      visible, status, perms, icon, create_by, create_time, remark)
@@ -84,4 +81,52 @@ WHERE parent.perms = 'train:server:view'
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1, menu.menu_id FROM sys_menu menu
 WHERE menu.perms IN ('train:server:view', 'train:server:manage')
+  AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = menu.menu_id);
+
+-- Web terminal permissions (phase 10).
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '远程终端', parent.menu_id, 5, 'terminal', 'train/terminal/index', 1, 0, 'C',
+       '0', '0', 'train:terminal:view', 'monitor', 'admin', NOW(), 'Web 终端通道（人工 PTY 会话）'
+FROM sys_menu parent
+WHERE parent.menu_name = 'GPUTrain' AND parent.parent_id = 0
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:terminal:view');
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '连接终端', parent.menu_id, 1, '#', 1, 0, 'F',
+       '0', '0', 'train:terminal:connect', '#', 'admin', NOW(), '发起终端会话（票据签发与握手）'
+FROM sys_menu parent
+WHERE parent.perms = 'train:terminal:view'
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:terminal:connect');
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1, menu.menu_id FROM sys_menu menu
+WHERE menu.perms IN ('train:terminal:view', 'train:terminal:connect')
+  AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = menu.menu_id);
+
+-- Command proposal permissions (phase 11, channel B).
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '命令提案', parent.menu_id, 6, 'proposals', 'train/proposals/index', 1, 0, 'C',
+       '0', '0', 'train:proposal:view', 'build', 'admin', NOW(), 'Agent 命令闭环（人工确认后白名单执行）'
+FROM sys_menu parent
+WHERE parent.menu_name = 'GPUTrain' AND parent.parent_id = 0
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:proposal:view');
+
+INSERT INTO sys_menu
+    (menu_name, parent_id, order_num, path, is_frame, is_cache, menu_type,
+     visible, status, perms, icon, create_by, create_time, remark)
+SELECT '执行提案', parent.menu_id, 1, '#', 1, 0, 'F',
+       '0', '0', 'train:proposal:execute', '#', 'admin', NOW(), '创建/批准/拒绝命令提案'
+FROM sys_menu parent
+WHERE parent.perms = 'train:proposal:view'
+  AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'train:proposal:execute');
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1, menu.menu_id FROM sys_menu menu
+WHERE menu.perms IN ('train:proposal:view', 'train:proposal:execute')
   AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = menu.menu_id);

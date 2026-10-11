@@ -34,6 +34,6 @@ describe('GPU selection', () => {
   })
 
   it('allows external occupancy when enough memory remains', () => {
-    expect(deviceSelection(gpu({ externalProcessCount: 1, identityState: 'EXTERNAL_OCCUPIED', schedulable: false }), now).selectable).toBe(true)
+    expect(deviceSelection(gpu({ externalProcessCount: 1, identityState: 'EXTERNAL_OCCUPIED', schedulable: false, utilizationPercent: 100 }), now).selectable).toBe(true)
   })
 })

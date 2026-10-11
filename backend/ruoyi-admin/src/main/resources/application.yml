@@ -2,14 +2,17 @@
 gputrain:
   ssh:
     master-key: ${GPUTRAIN_SSH_MASTER_KEY:}
-  runner-security:
-    master-key: ${RUNNER_CREDENTIAL_MASTER_KEY:}
-    enrollment-pepper: ${RUNNER_ENROLLMENT_PEPPER:}
-    allowed-clock-skew: 2m
-    nonce-ttl: 5m
-    max-request-body-bytes: 65536
-    require-https: true
-    allow-loopback-http: false
+  terminal:
+    # 终端会话空闲超时（输入或输出都会刷新）
+    idle-timeout: 30m
+    # 单个终端会话的绝对时长上限
+    max-session-duration: 12h
+    # 每个用户允许并存的终端会话数
+    max-sessions-per-user: 3
+    # 全局允许并存的终端会话总数
+    max-total-sessions: 16
+    # 终端连接票据的有效期（一次性，签发后须在此时间内完成握手）
+    ticket-ttl: 60s
 
 ruoyi:
   # 名称

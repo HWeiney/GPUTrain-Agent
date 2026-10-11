@@ -50,6 +50,8 @@ export default defineConfig(({ mode, command }) => {
         '/dev-api': {
           target: baseUrl,
           changeOrigin: true,
+          // WebSocket 终端通道（/websocket/terminal）经同一代理转发
+          ws: true,
           rewrite: (p) => p.replace(/^\/dev-api/, '')
         },
          // springdoc proxy

@@ -101,6 +101,10 @@ public class SecurityConfig
                 // MCP is a servlet endpoint rather than an MVC controller, so apply the same
                 // job-view permission explicitly at the HTTP boundary.
                 requests.requestMatchers("/mcp").access(new McpPermissionAuthorizationManager());
+                // WebSocket handshake cannot carry the JWT Authorization header, so the
+                // terminal endpoint authenticates itself via a one-time ticket issued by
+                // POST /train/terminal/ticket (which enforces train:terminal:connect).
+                requests.requestMatchers("/websocket/terminal").permitAll();
                 permitAllUrl.getUrls().forEach(url -> requests.requestMatchers(url).permitAll());
                 // 对于登录login 注册register 验证码captchaImage 允许匿名访问
                 requests.requestMatchers("/login", "/register", "/captchaImage").permitAll()

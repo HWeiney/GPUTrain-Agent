@@ -13,12 +13,14 @@ services:
       - ../backend/sql/ry_20260417.sql:/docker-entrypoint-initdb.d/01-ruoyi.sql:ro
       - ../backend/sql/quartz.sql:/docker-entrypoint-initdb.d/02-quartz.sql:ro
       - ../backend/sql/gputrain_menu.sql:/docker-entrypoint-initdb.d/03-gputrain-menu.sql:ro
-      - ../backend/sql/gputrain_runner.sql:/docker-entrypoint-initdb.d/04-gputrain-runner.sql:ro
-      - ../backend/sql/gputrain_phase3.sql:/docker-entrypoint-initdb.d/05-gputrain-phase3.sql:ro
-      - ../backend/sql/gputrain_phase4.sql:/docker-entrypoint-initdb.d/06-gputrain-phase4.sql:ro
-      - ../backend/sql/gputrain_phase6.sql:/docker-entrypoint-initdb.d/07-gputrain-phase6.sql:ro
-      - ../backend/sql/gputrain_phase8_ssh_servers.sql:/docker-entrypoint-initdb.d/08-gputrain-ssh-servers.sql:ro
-      - ../backend/sql/gputrain_phase9_ssh_jobs.sql:/docker-entrypoint-initdb.d/09-gputrain-ssh-jobs.sql:ro
+      - ../backend/sql/gputrain_ssh_baseline.sql:/docker-entrypoint-initdb.d/04-gputrain-ssh-baseline.sql:ro
+      - ../backend/sql/gputrain_phase8_ssh_servers.sql:/docker-entrypoint-initdb.d/05-gputrain-ssh-servers.sql:ro
+      - ../backend/sql/gputrain_phase9_ssh_jobs.sql:/docker-entrypoint-initdb.d/06-gputrain-ssh-jobs.sql:ro
+      - ../backend/sql/gputrain_phase6.sql:/docker-entrypoint-initdb.d/07-gputrain-mcp.sql:ro
+      - ../backend/sql/gputrain_phase10_terminal.sql:/docker-entrypoint-initdb.d/08-gputrain-terminal.sql:ro
+      - ../backend/sql/gputrain_phase11_proposals.sql:/docker-entrypoint-initdb.d/09-gputrain-proposals.sql:ro
+      - ../backend/sql/gputrain_phase12_proposal_rationale.sql:/docker-entrypoint-initdb.d/10-gputrain-proposal-rationale.sql:ro
+      - ../backend/sql/gputrain_phase13_agent_memory.sql:/docker-entrypoint-initdb.d/11-gputrain-agent-memory.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s

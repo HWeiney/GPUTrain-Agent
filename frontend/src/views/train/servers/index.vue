@@ -125,7 +125,7 @@
           <el-table-column label="显存 (已用 / 总量)" min-width="170"><template #default="{ row }">{{ row.usedMemoryMiB }} / {{ row.totalMemoryMiB }} MiB</template></el-table-column>
           <el-table-column label="利用率" width="90"><template #default="{ row }">{{ row.utilizationPercent }}%</template></el-table-column>
           <el-table-column prop="externalProcessCount" label="外部进程" width="100" />
-          <el-table-column label="状态" width="145"><template #default="{ row }"><el-tag :type="row.schedulable ? 'success' : 'warning'">{{ isSnapshotStale(row.sampledAt) ? '快照过期' : row.identityState }}</el-tag></template></el-table-column>
+          <el-table-column label="状态" width="170"><template #default="{ row }"><el-tag :type="row.schedulable ? 'success' : 'warning'">{{ isSnapshotStale(row.sampledAt) ? '快照过期' : row.schedulable ? (row.identityState === 'EXTERNAL_OCCUPIED' ? '可用（显存充足）' : '可用') : row.identityState }}</el-tag></template></el-table-column>
         </el-table>
       </div>
       <el-empty v-else-if="!detailLoading" description="没有可显示的服务器状态" />

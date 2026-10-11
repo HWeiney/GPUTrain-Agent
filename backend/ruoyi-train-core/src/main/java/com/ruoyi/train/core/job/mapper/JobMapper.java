@@ -17,8 +17,6 @@ public interface JobMapper
 
     JobRecord findByRequestKey(@Param("requestKey") String requestKey);
 
-    JobRecord findByCommandUuid(@Param("commandUuid") String commandUuid);
-
     List<JobRecord> listDueSshJobs(@Param("cutoff") Instant cutoff, @Param("limit") int limit);
 
     List<JobRecord> listSshToStart(@Param("limit") int limit);
@@ -43,19 +41,4 @@ public interface JobMapper
             @Param("newStatus") String newStatus,
             @Param("updatedAt") Instant updatedAt);
 
-    /**
-     * Attach the scheduled runner and START command and move to STARTING.
-     */
-    int attachStartCommand(@Param("jobId") long jobId,
-            @Param("runnerId") long runnerId,
-            @Param("startCommandId") long startCommandId,
-            @Param("processSpecJson") String processSpecJson,
-            @Param("updatedAt") Instant updatedAt);
-
-    /**
-     * Attach the STOP command and move to STOPPING.
-     */
-    int attachStopCommand(@Param("jobId") long jobId,
-            @Param("stopCommandId") long stopCommandId,
-            @Param("updatedAt") Instant updatedAt);
 }

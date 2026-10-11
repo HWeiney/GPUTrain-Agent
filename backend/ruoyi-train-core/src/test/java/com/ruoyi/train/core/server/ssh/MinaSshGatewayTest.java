@@ -81,6 +81,14 @@ class MinaSshGatewayTest
         assertFalse(result.toString().contains(stdout.trim()));
     }
 
+    @Test void permitsExplicitLingerProbeForLinuxUsername()
+    {
+        var result = gateway().withVerifiedSession(server(fingerprint()), password("password"),
+            session -> session.exec(List.of("loginctl", "show-user", "alice", "--property=Linger"), timeout, 1024));
+        assertEquals(0, result.exitCode());
+        assertEquals(1, commands.get());
+    }
+
     @Test void plainAndEncryptedOpenSshPrivateKeysAuthenticate() throws Exception
     {
         for (boolean encrypted : new boolean[] {false, true})

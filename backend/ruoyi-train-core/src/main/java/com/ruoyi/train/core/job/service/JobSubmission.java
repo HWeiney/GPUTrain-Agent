@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.ruoyi.train.runner.protocol.ProcessSpec;
+import com.ruoyi.train.core.job.domain.ProcessSpec;
 
 /**
  * Immutable request to create a training job. The request {@link #requestKey()} makes
@@ -17,7 +17,7 @@ import com.ruoyi.train.runner.protocol.ProcessSpec;
  * @param allowedUuids optional whitelist of GPU UUIDs
  * @param deniedUuids optional blacklist of GPU UUIDs
  * @param requestKey client-supplied idempotency key for the request
- * @param workingDirectory allowed working directory for the fixture
+ * @param workingDirectory authorized working directory for the SSH job
  * @param executable executable to run
  * @param arguments fixed argument vector (no shell interpolation)
  * @param environment allowed environment for the process
@@ -53,8 +53,7 @@ public record JobSubmission(long ownerUserId, int gpuCount, long minMemoryMiB,
     }
     /**
      * Builds the structured process specification for this job. The command idempotency
-     * key is derived deterministically from the request key so retries never produce a
-     * second process.
+     * key is derived deterministically from the request key.
      */
     public ProcessSpec toProcessSpec()
     {

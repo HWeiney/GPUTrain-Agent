@@ -54,11 +54,17 @@ class SshJobSchemaContractTest
     }
 
     @Test
-    void composeMountsPhaseNineAfterServerInventory() throws Exception
+    void freshInstallUsesSshSchemaWithoutRunnerTables() throws Exception
     {
         String compose = Files.readString(Path.of("../../deploy/compose.yaml"));
-        assertTrue(compose.contains("../backend/sql/gputrain_phase9_ssh_jobs.sql:/docker-entrypoint-initdb.d/09-gputrain-ssh-jobs.sql:ro"));
-        assertTrue(compose.indexOf("08-gputrain-ssh-servers.sql") < compose.indexOf("09-gputrain-ssh-jobs.sql"));
+        String baseline = Files.readString(Path.of("../sql/gputrain_ssh_baseline.sql"));
+        assertTrue(baseline.contains("CREATE TABLE IF NOT EXISTS train_job ("));
+        assertTrue(baseline.contains("CREATE TABLE IF NOT EXISTS train_job_alert ("));
+        assertFalse(compose.contains("gputrain_runner.sql"));
+        assertFalse(compose.contains("gputrain_phase3.sql"));
+        assertFalse(compose.contains("gputrain_phase4.sql"));
+        assertTrue(compose.indexOf("gputrain_ssh_baseline.sql") < compose.indexOf("gputrain_phase8_ssh_servers.sql"));
+        assertTrue(compose.indexOf("gputrain_phase8_ssh_servers.sql") < compose.indexOf("gputrain_phase9_ssh_jobs.sql"));
     }
 
     @Test

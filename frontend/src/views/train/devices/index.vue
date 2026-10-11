@@ -4,11 +4,10 @@
       <div>
         <p class="page-kicker">GPU DEVICE CATALOG</p>
         <h1>GPU 设备</h1>
-        <p class="page-summary">Runner 上报的 GPU 快照、身份状态与外部占用。数据仅为观测事实，不代表可调度。</p>
+        <p class="page-summary">服务器账户探测到的 GPU 快照、身份状态与外部占用。数据仅为观测事实。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="source" aria-label="GPU 数据来源" class="source-select" @change="load">
-          <el-option label="Runner 设备" value="runner" />
           <el-option v-for="item in serverOptions" :key="item.key" :label="item.label" :value="item.key" />
         </el-select>
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -46,46 +45,36 @@
 </template>
 
 <script setup lang="ts">
-import { listGpuDevices, listServerGpuDevices, type GpuDevice } from '@/api/train/devices'
+import { listServerGpuDevices, type GpuDevice } from '@/api/train/devices'
 import { listServers, type ServerEntry } from '@/api/train/servers'
 import { isSnapshotStale } from '@/views/train/servers/serverStatus'
-import useUserStore from '@/store/modules/user'
 
 const { proxy } = getCurrentInstance()!
-const userStore = useUserStore()
 const loading = ref(false)
 const failed = ref(false)
 const now = ref(Date.now())
 const devices = ref<GpuDevice[]>([])
-const source = ref('runner')
-const displayedSource = ref('runner')
+const source = ref('')
 const serverEntries = ref<ServerEntry[]>([])
-const serverOptions = computed(() => (serverEntries.value ?? []).flatMap((entry: ServerEntry) => entry.accounts.map((account) => ({
+const serverOptions = computed(() => serverEntries.value.flatMap((entry: ServerEntry) => entry.accounts.map((account: ServerEntry['accounts'][number]) => ({
   key: `${entry.server.serverId}:${account.accountId}`,
   label: `${entry.server.name} · ${account.linuxUsername}`
 }))))
 
 function isStale(row: GpuDevice): boolean {
-  if (!row.sampledAt) return true
-  return isSnapshotStale(row.sampledAt, now.value)
+  return !row.sampledAt || isSnapshotStale(row.sampledAt, now.value)
 }
-
 function statusText(row: GpuDevice): string {
-  if (row.hasActiveLease) return '已租'
   if (row.identityState !== 'CONFIRMED') return row.identityState
   if (isStale(row)) return '快照过期'
   if (row.externalProcessCount > 0) return '外部占用'
-  if (row.schedulable) return '可调度'
-  return '不可调度'
+  return row.schedulable ? '可调度' : '不可调度'
 }
-
 function tagType(row: GpuDevice): 'success' | 'warning' | 'danger' | 'info' {
-  if (row.hasActiveLease) return 'success'
   if (row.identityState !== 'CONFIRMED' || isStale(row)) return 'danger'
   if (row.externalProcessCount > 0) return 'warning'
   return row.schedulable ? 'success' : 'info'
 }
-
 function maskUuid(uuid: string): string {
   return uuid.length > 14 ? uuid.slice(0, 10) + '…' + uuid.slice(-4) : uuid
 }
@@ -93,53 +82,36 @@ function maskUuid(uuid: string): string {
 let loadGeneration = 0
 async function load() {
   const generation = ++loadGeneration
-  const requestedSource = source.value
-  if (requestedSource !== displayedSource.value) {
-    devices.value = []
-    displayedSource.value = requestedSource
-  }
   loading.value = true
   failed.value = false
+  devices.value = []
   try {
-    if (userStore.permissions.includes('train:server:view') || userStore.roles.includes('admin')) {
-      try {
-        const response = await listServers()
-        if (generation !== loadGeneration || requestedSource !== source.value) return
-        serverEntries.value = response.data ?? []
-      } catch { if (generation === loadGeneration && requestedSource === source.value) serverEntries.value = [] }
-    } else serverEntries.value = []
-    if (generation !== loadGeneration || requestedSource !== source.value) return
-    if (source.value !== 'runner' && !serverOptions.value.some((option: { key: string; label: string }) => option.key === source.value)) source.value = 'runner'
-    const effectiveSource = source.value
-    if (effectiveSource !== displayedSource.value) {
-      devices.value = []
-      displayedSource.value = effectiveSource
+    const inventory = await listServers()
+    if (generation !== loadGeneration) return
+    serverEntries.value = inventory.data ?? []
+    if (!serverOptions.value.some((option: { key: string; label: string }) => option.key === source.value)) {
+      source.value = serverOptions.value[0]?.key ?? ''
     }
-    if (effectiveSource === 'runner') {
-      const response = await listGpuDevices()
-      if (generation !== loadGeneration || effectiveSource !== source.value) return
-      devices.value = response.data ?? []
-    } else {
-      const [serverIdText, accountIdText] = effectiveSource.split(':')
-      const response = await listServerGpuDevices(Number(serverIdText), Number(accountIdText))
-      if (generation !== loadGeneration || effectiveSource !== source.value) return
-      devices.value = (response.data ?? []).map(device => ({
-        gpuUuid: device.gpuUuid,
-        name: device.name,
-        hostSignature: serverEntries.value?.find((entry: ServerEntry) => entry.server.serverId === device.serverId)?.server.host ?? String(device.serverId),
-        identityState: device.identityState === 'OBSERVED' ? 'CONFIRMED' : device.identityState,
-        schedulable: device.schedulable,
-        sampledAt: device.sampledAt,
-        totalMemoryMiB: device.totalMemoryMiB,
-        usedMemoryMiB: device.usedMemoryMiB,
-        utilizationPercent: device.utilizationPercent,
-        migMode: device.migMode,
-        hasActiveLease: false,
-        externalProcessCount: device.externalProcessCount
-      }))
-    }
+    if (!source.value) return
+    const [serverId, accountId] = source.value.split(':').map(Number)
+    const response = await listServerGpuDevices(serverId, accountId)
+    if (generation !== loadGeneration) return
+    devices.value = (response.data ?? []).map(device => ({
+      gpuUuid: device.gpuUuid,
+      name: device.name,
+      hostSignature: serverEntries.value.find((entry: ServerEntry) => entry.server.serverId === device.serverId)?.server.host ?? String(device.serverId),
+      identityState: device.identityState === 'OBSERVED' ? 'CONFIRMED' : device.identityState,
+      schedulable: device.schedulable,
+      sampledAt: device.sampledAt,
+      totalMemoryMiB: device.totalMemoryMiB,
+      usedMemoryMiB: device.usedMemoryMiB,
+      utilizationPercent: device.utilizationPercent,
+      migMode: device.migMode,
+      hasActiveLease: false,
+      externalProcessCount: device.externalProcessCount
+    }))
   } catch (error) {
-    if (generation === loadGeneration && requestedSource === source.value) {
+    if (generation === loadGeneration) {
       failed.value = true
       proxy?.$modal.msgError('设备列表加载失败')
     }

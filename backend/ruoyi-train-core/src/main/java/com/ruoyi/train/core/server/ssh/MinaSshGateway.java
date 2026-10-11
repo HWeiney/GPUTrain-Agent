@@ -3,9 +3,6 @@ package com.ruoyi.train.core.server.ssh;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.SocketTimeoutException;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -13,25 +10,16 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.*;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.apache.sshd.client.SshClient;
-import org.apache.sshd.client.auth.password.PasswordIdentityProvider;
-import org.apache.sshd.client.auth.password.UserAuthPasswordFactory;
-import org.apache.sshd.client.auth.pubkey.UserAuthPublicKeyFactory;
 import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.channel.ClientChannelEvent;
-import org.apache.sshd.client.config.hosts.HostConfigEntryResolver;
 import org.apache.sshd.client.keyverifier.ServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.client.session.ClientSession.ClientSessionEvent;
-import org.apache.sshd.common.NamedResource;
-import org.apache.sshd.common.config.keys.FilePasswordProvider;
-import org.apache.sshd.common.keyprovider.KeyIdentityProvider;
-import org.apache.sshd.common.util.security.SecurityUtils;
-import org.apache.sshd.core.CoreModuleProperties;
 import org.apache.sshd.sftp.client.SftpClient;
 import org.apache.sshd.sftp.client.SftpClientFactory;
 import org.apache.sshd.sftp.common.SftpConstants;
@@ -42,6 +30,10 @@ import com.ruoyi.train.core.server.domain.ServerRecord;
 import com.ruoyi.train.core.server.domain.ServerAccountRecord;
 import static com.ruoyi.train.core.server.ssh.SshGateway.ErrorCode.*;
 
+/**
+ * exec 短命令网关：连接/认证/校验委托 {@link SshTransport}，自身只保留
+ * 并发槽与命令白名单语义。交互式长会话（Web 终端）不走本网关。
+ */
 @Component
 public final class MinaSshGateway implements SshGateway
 {
@@ -51,31 +43,24 @@ public final class MinaSshGateway implements SshGateway
         List.of("nvidia-smi", "--query-gpu=gpu_uuid,name,index,memory.total,memory.used,utilization.gpu,mig.mode.current,driver_version", "--format=csv,noheader,nounits"),
         List.of("nvidia-smi", "--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"),
         List.of("systemctl", "--user", "is-system-running"),
-        List.of("loginctl", "show-user", "--property=Linger"),
         List.of("systemd-run", "--user", "--wait", "--collect", "--unit=gputrain-capability-probe.service",
             "--property=StandardOutput=append:/dev/null", "--property=StandardError=append:/dev/null", "/usr/bin/true"));
     private static final String SYSTEMD_PROPERTIES = "LoadState,ActiveState,SubState,Result,ExecMainPID,ExecMainStatus,ControlGroup";
 
-    // DNS lookup may block in native code; cap both caller wait and resolver workers.
-    private static final ExecutorService RESOLVER = new ThreadPoolExecutor(0, MAX_SESSIONS,
-        30, TimeUnit.SECONDS, new SynchronousQueue<>(), task -> {
-            Thread thread = new Thread(task, "ssh-host-resolver");
-            thread.setDaemon(true);
-            return thread;
-        }, new ThreadPoolExecutor.AbortPolicy());
-    private final ServerSecretCipher cipher;
-    private final Duration connectTimeout;
-    private final Duration authTimeout;
+    private final SshTransport transport;
     private final Semaphore slots;
 
     @Autowired
-    public MinaSshGateway(ServerSecretCipher cipher) { this(cipher, DEFAULT_CONNECT_TIMEOUT, DEFAULT_AUTH_TIMEOUT, MAX_SESSIONS); }
+    public MinaSshGateway(SshTransport transport) { this(transport, MAX_SESSIONS); }
 
     public MinaSshGateway(ServerSecretCipher cipher, Duration connectTimeout, Duration authTimeout, int concurrency)
     {
-        this.cipher = Objects.requireNonNull(cipher);
-        this.connectTimeout = bounded(connectTimeout, DEFAULT_CONNECT_TIMEOUT);
-        this.authTimeout = bounded(authTimeout, DEFAULT_AUTH_TIMEOUT);
+        this(new SshTransport(cipher, connectTimeout, authTimeout), concurrency);
+    }
+
+    MinaSshGateway(SshTransport transport, int concurrency)
+    {
+        this.transport = Objects.requireNonNull(transport);
         if (concurrency < 1 || concurrency > MAX_SESSIONS) throw new SshException(INVALID_LIMIT);
         slots = new Semaphore(concurrency);
     }
@@ -83,168 +68,71 @@ public final class MinaSshGateway implements SshGateway
     @Override
     public HostKeyPreview preview(String host, int port, Duration timeout)
     {
-        validateAddress(host, port);
-        Duration limit = bounded(timeout, connectTimeout);
+        SshTransport.validateAddress(host, port);
+        Duration limit = SshTransport.bounded(timeout, transport.connectTimeout());
         acquire();
         AtomicReference<HostKeyPreview> observed = new AtomicReference<>();
         // Capture and reject: this connection never accepts an unconfirmed host key.
-        try (SshClient client = client((session, address, key) -> {
+        try (SshClient client = transport.client((session, address, key) -> {
             observed.set(HostKeyFingerprint.of(key));
             return false;
-        }))
+        }, SshTransport.COMMAND_IDLE_TIMEOUT))
         {
-            long deadline = deadline(limit);
-            try (ClientSession session = connect(client, "host-key-preview", host, port, deadline))
+            long deadline = SshTransport.deadline(limit);
+            try (ClientSession session = transport.connect(client, "host-key-preview", host, port, deadline))
             {
-                var state = session.waitFor(EnumSet.of(ClientSessionEvent.CLOSED), remaining(deadline, CONNECT_TIMEOUT));
+                var state = session.waitFor(EnumSet.of(ClientSessionEvent.CLOSED), SshTransport.remaining(deadline, CONNECT_TIMEOUT));
                 if (observed.get() != null) return observed.get();
                 throw new SshException(state.contains(ClientSessionEvent.TIMEOUT) ? CONNECT_TIMEOUT : CONNECT_FAILED);
             }
             catch (IOException e)
             {
                 if (observed.get() != null) return observed.get();
-                throw failure(e, CONNECT_TIMEOUT, CONNECT_FAILED);
+                throw SshTransport.failure(e, CONNECT_TIMEOUT, CONNECT_FAILED);
             }
         }
-        catch (IOException e) { throw failure(e, CONNECT_TIMEOUT, CONNECT_FAILED); }
+        catch (IOException e) { throw SshTransport.failure(e, CONNECT_TIMEOUT, CONNECT_FAILED); }
         finally { slots.release(); }
     }
 
     @Override
     public <T> T withVerifiedSession(ServerRecord server, ServerAccountRecord account, Function<SshSession, T> operation)
     {
-        validateAccount(server, account);
+        transport.validateAccount(server, account);
         Objects.requireNonNull(operation);
         acquire();
         AtomicBoolean changed = new AtomicBoolean();
         AtomicBoolean verified = new AtomicBoolean();
-        try (SshClient client = client((session, address, key) -> {
+        try (SshClient client = transport.client((session, address, key) -> {
             boolean matches = HostKeyFingerprint.matches(server.hostKeySha256(), key);
             verified.set(matches);
             if (!matches) changed.set(true);
             return matches;
-        }))
+        }, SshTransport.COMMAND_IDLE_TIMEOUT))
         {
-            long deadline = deadline(connectTimeout);
-            try (ClientSession session = connect(client, account.linuxUsername(), server.host(), server.port(), deadline))
+            long deadline = SshTransport.deadline(transport.connectTimeout());
+            try (ClientSession session = transport.connect(client, account.linuxUsername(), server.host(), server.port(), deadline))
             {
                 var state = session.waitFor(EnumSet.of(ClientSessionEvent.WAIT_AUTH, ClientSessionEvent.CLOSED),
-                    remaining(deadline, CONNECT_TIMEOUT));
+                    SshTransport.remaining(deadline, CONNECT_TIMEOUT));
                 if (changed.get()) throw new SshException(HOST_KEY_CHANGED);
                 if (state.contains(ClientSessionEvent.TIMEOUT)) throw new SshException(CONNECT_TIMEOUT);
                 if (!verified.get() || !state.contains(ClientSessionEvent.WAIT_AUTH) || state.contains(ClientSessionEvent.CLOSED))
                     throw new SshException(CONNECT_FAILED);
-                authenticate(session, account);
+                transport.authenticate(session, account);
                 try (SshSession limited = new VerifiedSession(session)) { return operation.apply(limited); }
             }
             catch (IOException e)
             {
                 if (changed.get()) throw new SshException(HOST_KEY_CHANGED);
-                throw failure(e, CONNECT_TIMEOUT, CONNECT_FAILED);
+                throw SshTransport.failure(e, CONNECT_TIMEOUT, CONNECT_FAILED);
             }
         }
-        catch (IOException e) { throw failure(e, CONNECT_TIMEOUT, CONNECT_FAILED); }
+        catch (IOException e) { throw SshTransport.failure(e, CONNECT_TIMEOUT, CONNECT_FAILED); }
         finally { slots.release(); }
     }
 
-    private SshClient client(ServerKeyVerifier verifier)
-    {
-        SshClient client = SshClient.setUpDefaultClient();
-        client.setServerKeyVerifier(verifier);
-        client.setHostConfigEntryResolver(HostConfigEntryResolver.EMPTY);
-        client.setKeyIdentityProvider(KeyIdentityProvider.EMPTY_KEYS_PROVIDER);
-        client.setPasswordIdentityProvider(PasswordIdentityProvider.EMPTY_PASSWORDS_PROVIDER);
-        client.setAgentFactory(null);
-        client.setUserInteraction(null);
-        client.setUserAuthFactories(List.of(UserAuthPasswordFactory.INSTANCE, UserAuthPublicKeyFactory.INSTANCE));
-        CoreModuleProperties.NIO_WORKERS.set(client, 1);
-        CoreModuleProperties.AUTH_TIMEOUT.set(client, connectTimeout.plus(authTimeout));
-        CoreModuleProperties.IDLE_TIMEOUT.set(client, DEFAULT_COMMAND_TIMEOUT.plusSeconds(5));
-        CoreModuleProperties.IO_CONNECT_TIMEOUT.set(client, connectTimeout);
-        client.start();
-        return client;
-    }
-
-    private ClientSession connect(SshClient client, String username, String host, int port, long deadline) throws IOException
-    {
-        Future<InetAddress> lookup;
-        try { lookup = RESOLVER.submit(() -> InetAddress.getByName(host)); }
-        catch (RejectedExecutionException ignored) { throw new SshException(CONCURRENCY_LIMIT); }
-        InetAddress address;
-        try { address = lookup.get(remaining(deadline, CONNECT_TIMEOUT), TimeUnit.MILLISECONDS); }
-        catch (TimeoutException ignored) { throw new SshException(CONNECT_TIMEOUT); }
-        catch (InterruptedException ignored) { Thread.currentThread().interrupt(); throw new SshException(CONNECT_FAILED); }
-        catch (ExecutionException ignored) { throw new SshException(CONNECT_FAILED); }
-        finally { lookup.cancel(true); }
-        return client.connect(username, new InetSocketAddress(address, port))
-            .verify(remaining(deadline, CONNECT_TIMEOUT)).getSession();
-    }
-
-    private void authenticate(ClientSession session, ServerAccountRecord account)
-    {
-        long deadline = deadline(authTimeout);
-        try
-        {
-            String credential = cipher.decrypt(account.credentialCiphertext());
-            if ("PASSWORD".equals(account.authType()))
-            {
-                session.setUserAuthFactories(List.of(UserAuthPasswordFactory.INSTANCE));
-                session.addPasswordIdentity(credential);
-            }
-            else
-            {
-                session.setUserAuthFactories(List.of(UserAuthPublicKeyFactory.INSTANCE));
-                String passphrase = account.passphraseCiphertext() == null ? null : cipher.decrypt(account.passphraseCiphertext());
-                var keys = SecurityUtils.getKeyPairResourceParser().loadKeyPairs(session,
-                    NamedResource.ofName("stored-ssh-identity"),
-                    passphrase == null ? FilePasswordProvider.EMPTY : FilePasswordProvider.of(passphrase), credential);
-                if (keys == null || keys.size() != 1) throw new SshException(CREDENTIAL_INVALID);
-                session.addPublicKeyIdentity(keys.iterator().next());
-            }
-            session.auth().verify(remaining(deadline, AUTH_TIMEOUT));
-        }
-        catch (SshException e) { throw e; }
-        catch (Exception e) { throw failure(e, AUTH_TIMEOUT, AUTH_FAILED); }
-    }
-
-    private void validateAccount(ServerRecord server, ServerAccountRecord account)
-    {
-        if (server == null || account == null || !server.enabled() || !account.enabled()
-            || server.serverId() == null || !server.serverId().equals(account.serverId())
-            || !account.hasCredential() || account.credentialCiphertext() == null
-            || account.linuxUsername() == null || !account.linuxUsername().matches("[a-zA-Z_][a-zA-Z0-9_.-]{0,63}[$]?" )
-            || !("PASSWORD".equals(account.authType()) || "PRIVATE_KEY".equals(account.authType())))
-            throw new SshException(ACCOUNT_INVALID);
-        validateAddress(server.host(), server.port());
-        if (!HostKeyFingerprint.isValid(server.hostKeySha256())) throw new SshException(HOST_KEY_UNCONFIRMED);
-    }
-
-    private static void validateAddress(String host, int port)
-    {
-        if (host == null || host.isBlank() || host.length() > 255 || !host.matches("[A-Za-z0-9_.:%-]+") || port < 1 || port > 65535)
-            throw new SshException(ACCOUNT_INVALID);
-    }
-
     private void acquire() { if (!slots.tryAcquire()) throw new SshException(CONCURRENCY_LIMIT); }
-    private static Duration bounded(Duration value, Duration maximum)
-    {
-        if (value == null || value.isNegative() || value.isZero() || value.compareTo(Duration.ofMillis(1)) < 0 || value.compareTo(maximum) > 0)
-            throw new SshException(INVALID_LIMIT);
-        return value;
-    }
-    private static long deadline(Duration timeout) { return System.nanoTime() + timeout.toNanos(); }
-    private static long remaining(long deadline, ErrorCode code)
-    {
-        long nanos = deadline - System.nanoTime();
-        if (nanos <= 0) throw new SshException(code);
-        return Math.max(1, TimeUnit.NANOSECONDS.toMillis(nanos));
-    }
-    private static SshException failure(Throwable error, ErrorCode timeout, ErrorCode fallback)
-    {
-        for (Throwable cause = error; cause != null; cause = cause.getCause())
-            if (cause instanceof TimeoutException || cause instanceof SocketTimeoutException) return new SshException(timeout);
-        return new SshException(fallback);
-    }
 
     private static final class VerifiedSession implements SshSession
     {
@@ -260,9 +148,9 @@ public final class MinaSshGateway implements SshGateway
             try { command = List.copyOf(fixedCommand); }
             catch (NullPointerException ignored) { throw new SshException(COMMAND_NOT_ALLOWED); }
             if (!allowedCommand(command)) throw new SshException(COMMAND_NOT_ALLOWED);
-            bounded(timeout, DEFAULT_COMMAND_TIMEOUT);
+            SshTransport.bounded(timeout, DEFAULT_COMMAND_TIMEOUT);
             if (maxBytes < 1 || maxBytes > MAX_OUTPUT_BYTES) throw new SshException(INVALID_LIMIT);
-            long deadline = deadline(timeout);
+            long deadline = SshTransport.deadline(timeout);
             AtomicBoolean overflow = new AtomicBoolean();
             String commandLine = command.stream().map(MinaSshGateway::shellQuote)
                     .collect(java.util.stream.Collectors.joining(" "));
@@ -272,8 +160,8 @@ public final class MinaSshGateway implements SshGateway
                 var err = new LimitedOutput(maxBytes, overflow, channel);
                 channel.setOut(out);
                 channel.setErr(err);
-                channel.open().verify(remaining(deadline, COMMAND_TIMEOUT));
-                var events = channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), remaining(deadline, COMMAND_TIMEOUT));
+                channel.open().verify(SshTransport.remaining(deadline, COMMAND_TIMEOUT));
+                var events = channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), SshTransport.remaining(deadline, COMMAND_TIMEOUT));
                 if (overflow.get()) throw new SshException(OUTPUT_LIMIT);
                 if (events.contains(ClientChannelEvent.TIMEOUT)) throw new SshException(COMMAND_TIMEOUT);
                 Integer exit = channel.getExitStatus();
@@ -283,7 +171,7 @@ public final class MinaSshGateway implements SshGateway
             catch (IOException e)
             {
                 if (overflow.get()) throw new SshException(OUTPUT_LIMIT);
-                throw failure(e, COMMAND_TIMEOUT, COMMAND_FAILED);
+                throw SshTransport.failure(e, COMMAND_TIMEOUT, COMMAND_FAILED);
             }
         }
 
@@ -326,7 +214,7 @@ public final class MinaSshGateway implements SshGateway
                 {
                     output.write(content);
                 }
-                sftp.setStat(remoteFile, new SftpClient.Attributes().perms(0600));
+                sftp.setStat(remoteFile.toString(), new SftpClient.Attributes().perms(0600));
             }
             catch (SshException e) { throw e; }
             catch (IOException e) { throw new SshException(COMMAND_FAILED); }
@@ -392,6 +280,9 @@ public final class MinaSshGateway implements SshGateway
     private static boolean allowedCommand(List<String> command)
     {
         if (COMMANDS.contains(command)) return true;
+        if (command.size() == 4 && command.get(0).equals("loginctl") && command.get(1).equals("show-user")
+                && command.get(2).matches("[a-zA-Z_][a-zA-Z0-9_.-]{0,63}[$]?")
+                && command.get(3).equals("--property=Linger")) return true;
         if (command.size() == 6 && command.get(0).equals("systemctl") && command.get(1).equals("--user")
                 && command.get(2).equals("show") && validUnit(command.get(3))
                 && command.get(4).equals("--no-pager") && command.get(5).equals("--property=" + SYSTEMD_PROPERTIES)) return true;
@@ -413,6 +304,12 @@ public final class MinaSshGateway implements SshGateway
                     && command.get(9).equals(work + "/run.sh");
         }
         return false;
+    }
+
+    /** 提案渲染期白名单预校验公开入口；执行期 VerifiedSession.exec 内仍逐条复检（双保险）。 */
+    public static boolean isAllowedCommand(List<String> command)
+    {
+        return allowedCommand(command);
     }
 
     private static boolean validUnit(String value)

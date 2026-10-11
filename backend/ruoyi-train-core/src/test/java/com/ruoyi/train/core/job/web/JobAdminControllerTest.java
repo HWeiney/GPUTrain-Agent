@@ -25,15 +25,8 @@ class JobAdminControllerTest
     private JobService serviceReturning(JobRecord job)
     {
         com.ruoyi.train.core.job.mapper.JobMapper mapper = proxy(job);
-        return new JobService(mapper,
-                new com.ruoyi.train.core.gpu.service.GpuLeaseService(
-                        noop(com.ruoyi.train.core.gpu.mapper.GpuLeaseMapper.class),
-                        new com.ruoyi.train.core.gpu.service.GpuCandidateSelector()),
-                new com.ruoyi.train.core.runner.service.RunnerCommandService(
-                        noop(com.ruoyi.train.core.runner.mapper.RunnerCommandMapper.class),
-                        new com.fasterxml.jackson.databind.ObjectMapper()),
-                noop(com.ruoyi.train.core.runner.mapper.RunnerCommandMapper.class),
-                new com.fasterxml.jackson.databind.ObjectMapper());
+        return new JobService(mapper, new com.fasterxml.jackson.databind.ObjectMapper(),
+                null, null, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -125,7 +118,7 @@ class JobAdminControllerTest
                 "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "GPU-cccccccc-cccc-cccc-cccc-cccccccccccc");
         JobSubmission submission = JobAdminController.toSubmission(42L,
-                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke", selected));
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "gpu456-smoke", 8L, 12L, selected));
 
         assertEquals(selected, submission.allowedUuids());
         assertEquals(3, submission.gpuCount());
@@ -143,6 +136,16 @@ class JobAdminControllerTest
         assertEquals(8L, submission.serverId());
         assertEquals(12L, submission.accountId());
         assertEquals("/data/hanw/hw_code/gputrain-test", submission.workingDirectory());
+    }
+
+    @Test
+    void newSubmissionRequiresAnSshServerAndAccount()
+    {
+        Set<String> selected = Set.of("GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "GPU-cccccccc-cccc-cccc-cccc-cccccccccccc");
+        assertThrows(IllegalArgumentException.class, () -> JobAdminController.toSubmission(42L,
+                new JobAdminController.CreateJobRequest("docowl2-srfund", 1, "no-server", selected)));
     }
 
     @Test
