@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.proposal.mapper.ProposalMapper">
+    <resultMap id="ProposalResult" type="com.ruoyi.train.core.server.proposal.domain.CommandProposalRecord">
+        <constructor>
+            <idArg column="proposal_id" javaType="java.lang.String"/>
+            <arg column="actor_user_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="account_id" javaType="java.lang.Long"/>
+            <arg column="source" javaType="java.lang.String"/>
+            <arg column="rationale" javaType="java.lang.String"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="args_json" javaType="java.lang.String"/>
+            <arg column="rendered_command" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="exit_code" javaType="java.lang.Integer"/>
+            <arg column="stdout" javaType="java.lang.String"/>
+            <arg column="stderr" javaType="java.lang.String"/>
+            <arg column="error_code" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="decided_at" javaType="java.time.Instant"/>
+            <arg column="executed_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.proposal.domain.CommandProposalRecord">
+        INSERT INTO train_command_proposal
+            (proposal_id, actor_user_id, server_id, account_id, source, rationale, action, args_json, rendered_command,
+             status, exit_code, stdout, stderr, error_code, created_at, decided_at, executed_at)
+        VALUES (#{proposalId}, #{actorUserId}, #{serverId}, #{accountId}, #{source}, #{rationale}, #{action}, #{argsJson},
+                #{renderedCommand}, #{status}, #{exitCode}, #{stdout}, #{stderr}, #{errorCode},
+                #{createdAt}, #{decidedAt}, #{executedAt})
+    </insert>
+
+    <select id="findById" resultMap="ProposalResult">
+        SELECT * FROM train_command_proposal WHERE proposal_id = #{proposalId}
+    </select>
+
+    <select id="listForActor" resultMap="ProposalResult">
+        SELECT * FROM train_command_proposal
+        WHERE actor_user_id = #{actorUserId}
+        ORDER BY created_at DESC, proposal_id
+    </select>
+
+    <select id="listAll" resultMap="ProposalResult">
+        SELECT * FROM train_command_proposal
+        ORDER BY created_at DESC, proposal_id
+    </select>
+
+    <update id="markExecuted">
+        UPDATE train_command_proposal
+        SET status = 'EXECUTED', decided_at = #{decidedAt}
+        WHERE proposal_id = #{proposalId} AND status = 'PENDING'
+    </update>
+
+    <update id="markRejected">
+        UPDATE train_command_proposal
+        SET status = 'REJECTED', decided_at = #{decidedAt}
+        WHERE proposal_id = #{proposalId} AND status = 'PENDING'
+    </update>
+
+    <update id="attachResult">
+        UPDATE train_command_proposal
+        SET exit_code = #{exitCode}, stdout = #{stdout}, stderr = #{stderr}, executed_at = #{executedAt}
+        WHERE proposal_id = #{proposalId} AND status = 'EXECUTED' AND exit_code IS NULL
+    </update>
+
+    <update id="markFailed">
+        UPDATE train_command_proposal
+        SET status = 'FAILED', error_code = #{errorCode}, executed_at = #{executedAt}
+        WHERE proposal_id = #{proposalId} AND status = 'EXECUTED' AND exit_code IS NULL
+    </update>
+</mapper>

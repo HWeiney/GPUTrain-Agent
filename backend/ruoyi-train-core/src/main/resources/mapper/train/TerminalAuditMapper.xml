@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.terminal.mapper.TerminalAuditMapper">
+    <insert id="insertAttempt" parameterType="com.ruoyi.train.core.server.terminal.domain.TerminalSessionRecord">
+        INSERT INTO train_terminal_session
+            (session_uuid, actor_user_id, server_id, account_id, status, close_reason, error_code, opened_at, closed_at)
+        VALUES (#{sessionUuid}, #{actorUserId}, #{serverId}, #{accountId}, #{status}, #{closeReason}, #{errorCode}, #{openedAt}, #{closedAt})
+    </insert>
+
+    <update id="markError">
+        UPDATE train_terminal_session
+        SET status = 'ERROR', error_code = #{errorCode}, closed_at = #{closedAt}
+        WHERE session_uuid = #{sessionUuid}
+    </update>
+
+    <update id="finishAttempt">
+        UPDATE train_terminal_session
+        SET status = 'CLOSED', close_reason = #{closeReason}, closed_at = #{closedAt}
+        WHERE session_uuid = #{sessionUuid} AND status = 'ACTIVE'
+    </update>
+</mapper>

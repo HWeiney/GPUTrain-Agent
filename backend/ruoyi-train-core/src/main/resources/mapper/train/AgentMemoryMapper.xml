@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.train.core.server.agentmemory.mapper.AgentMemoryMapper">
+    <resultMap id="AgentMemoryResult" type="com.ruoyi.train.core.server.agentmemory.domain.AgentMemoryRecord">
+        <constructor>
+            <idArg column="memory_id" javaType="java.lang.String"/>
+            <arg column="actor_user_id" javaType="java.lang.Long"/>
+            <arg column="server_id" javaType="java.lang.Long"/>
+            <arg column="intent_text" javaType="java.lang.String"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="args_json" javaType="java.lang.String"/>
+            <arg column="rationale" javaType="java.lang.String"/>
+            <arg column="proposal_id" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="MemoryTurnResult" type="com.ruoyi.train.core.server.agentmemory.domain.MemoryTurnView">
+        <constructor>
+            <idArg column="memory_id" javaType="java.lang.String"/>
+            <arg column="intent_text" javaType="java.lang.String"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="exit_code" javaType="java.lang.Integer"/>
+            <arg column="output_excerpt" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.train.core.server.agentmemory.domain.AgentMemoryRecord">
+        INSERT INTO train_agent_memory
+            (memory_id, actor_user_id, server_id, intent_text, action, args_json, rationale, proposal_id, created_at)
+        VALUES (#{memoryId}, #{actorUserId}, #{serverId}, #{intentText}, #{action}, #{argsJson},
+                #{rationale}, #{proposalId}, #{createdAt})
+    </insert>
+
+    <select id="history" resultMap="MemoryTurnResult">
+        SELECT m.memory_id, m.intent_text, m.action, p.status, p.exit_code,
+               LEFT(p.stdout, 600) AS output_excerpt, m.created_at
+        FROM train_agent_memory m
+        LEFT JOIN train_command_proposal p ON m.proposal_id = p.proposal_id
+        WHERE m.actor_user_id = #{actorUserId} AND m.server_id = #{serverId}
+        ORDER BY m.created_at DESC
+        LIMIT #{limit}
+    </select>
+</mapper>
